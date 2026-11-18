@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Batch Watermark Remover — Zero Quality Loss</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #09090b 70%);
+      min-height: 100vh;
+    }
+    .glass-panel {
+      background: rgba(24, 24, 27, 0.75);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glow-purple {
+      box-shadow: 0 0 35px -5px rgba(99, 102, 241, 0.25);
+    }
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+  </style>
+</head>
+<body class="text-zinc-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- Header -->
+  <header class="border-b border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-white tracking-tight flex items-center gap-2">
+            Gemini Batch Remover
+            <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-medium border border-indigo-500/20">Zero Quality Loss</span>
+          </h1>
+          <p class="text-xs text-zinc-400">Mathematical Alpha Unblending for Gemini, Veo & Flow</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4 text-xs text-zinc-400">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Engine Ready</span>
+        </div>
+        <a href="/docs" target="_blank" class="hover:text-zinc-200 transition underline underline-offset-4">REST API Docs</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+
+    <!-- UPLOAD VIEW -->
+    <div id="view-upload" class="space-y-6">
+      
+      <!-- Hero Intro -->
+      <div class="text-center space-y-2">
+        <h2 class="text-3xl font-extrabold text-white tracking-tight">Remove Gemini Watermarks in Batch</h2>
+        <p class="text-zinc-400 max-w-xl mx-auto text-sm leading-relaxed">
+          Upload an entire folder or ZIP of images and videos. The backend reverses the exact linear alpha blending formula pixel-by-pixel with zero inpainting artifacts.
+        </p>
+      </div>
+
+      <!-- Main Upload Box -->
+      <div class="glass-panel glow-purple rounded-2xl p-8 border border-zinc-700/50 shadow-2xl space-y-6">
+        
+        <!-- Drag & Drop Zone -->
+        <div id="drop-zone" class="border-2 border-dashed border-zinc-700 hover:border-indigo-500/80 bg-zinc-900/40 hover:bg-zinc-900/80 rounded-xl p-10 text-center cursor-pointer transition-all duration-200 group">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center group-hover:scale-110 group-hover:bg-indigo-600/20 transition-all">
+            <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+          </div>
+          <p class="text-base font-semibold text-zinc-200 mb-1">Drag & drop your complete folder or ZIP file here</p>
+          <p class="text-xs text-zinc-400 mb-6">Supports PNG, JPG, WebP, TIFF, MP4, MOV, WebM (images & videos)</p>
+
+          <!-- Buttons -->
+          <div class="flex flex-wrap items-center justify-center gap-3" onclick="event.stopPropagation()">
+            <button type="button" id="btn-select-folder" class="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 flex items-center gap-2 transition active:scale-95">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              Select Folder
+            </button>
+            <button type="button" id="btn-select-zip" class="px-5 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs border border-zinc-700 flex items-center gap-2 transition active:scale-95">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              Select ZIP or Media Files
+            </button>
+          </div>
+
+          <!-- Hidden File Inputs -->
+          <input type="file" id="input-folder" webkitdirectory directory multiple class="hidden" />
+          <input type="file" id="input-zip" multiple accept=".zip,image/*,video/*" class="hidden" />
+        </div>
+
+        <!-- Selected Files Preview Bar -->
+        <div id="selected-files-bar" class="hidden p-4 rounded-xl bg-indigo-950/40 border border-indigo-800/40 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-300 flex items-center justify-center font-bold text-xs" id="selected-count">0</span>
+            <div>
+              <p class="text-xs font-semibold text-zinc-200" id="selected-summary">No files selected</p>
+              <p class="text-[11px] text-zinc-400" id="selected-details">Ready to upload</p>
+            </div>
+          </div>
+          <button type="button" id="btn-clear-selection" class="text-xs text-zinc-400 hover:text-rose-400 transition">Clear</button>
+        </div>
+
+        <!-- Settings & Model Presets -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          
+          <!-- Preset Selector -->
+          <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-zinc-300">Target Model Preset</label>
+            <select id="select-preset" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500">
+              <option value="auto">Auto / Standard Gemini 1.5 & 2.0 (Default)</option>
+              <option value="nano_banana">Nano Banana (Images)</option>
+              <option value="veo3">Veo 3 (Videos)</option>
+              <option value="flow">Flow Model</option>
+              <option value="omni">Omni Multimodal</option>
+            </select>
+            <p class="text-[11px] text-zinc-400" id="preset-desc">Standard Gemini default formula</p>
+          </div>
+
+          <!-- Video Quality & Lossless Output -->
+          <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-zinc-300">Processing Mode</label>
+            <div class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-300 flex items-center justify-between">
+              <span>Mathematical Unblending</span>
+              <span class="text-[10px] uppercase font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Lossless</span>
+            </div>
+            <p class="text-[11px] text-zinc-400">Pure arithmetic inversion without neural inpainting blur</p>
+          </div>
+        </div>
+
+        <!-- Collapsible Advanced Tuning -->
+        <div class="border-t border-zinc-800/80 pt-4">
+          <button type="button" id="btn-toggle-advanced" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 font-medium transition">
+            <svg id="advanced-arrow" class="w-3.5 h-3.5 transform transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+            Advanced Calibration (Gain & Position Offsets)
+          </button>
+
+          <div id="advanced-panel" class="hidden grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 mt-2">
+            <!-- Gain Slider -->
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px] text-zinc-300">
+                <span>Alpha Gain</span>
+                <span id="gain-val" class="font-mono text-indigo-400">1.00</span>
+              </div>
+              <input type="range" id="input-gain" min="0.5" max="1.5" step="0.05" value="1.0" class="w-full accent-indigo-500" />
+            </div>
+
+            <!-- X Offset Slider -->
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px] text-zinc-300">
+                <span>Offset X (px)</span>
+                <span id="offset-x-val" class="font-mono text-indigo-400">0</span>
+              </div>
+              <input type="range" id="input-offset-x" min="-30" max="30" step="1" value="0" class="w-full accent-indigo-500" />
+            </div>
+
+            <!-- Y Offset Slider -->
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px] text-zinc-300">
+                <span>Offset Y (px)</span>
+                <span id="offset-y-val" class="font-mono text-indigo-400">0</span>
+              </div>
+              <input type="range" id="input-offset-y" min="-30" max="30" step="1" value="0" class="w-full accent-indigo-500" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="pt-2">
+          <button type="button" id="btn-start-process" disabled class="w-full py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm shadow-lg shadow-indigo-600/30 transition duration-150 flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Start Batch Watermark Removal
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Feature Badges -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+        <div class="glass-panel p-4 rounded-xl border border-zinc-800">
+          <div class="text-indigo-400 text-lg mb-1">⚡ 100% Exact Math</div>
+          <p class="text-xs text-zinc-400">Reverses Google's linear alpha channel formula without hallucinating pixels.</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border border-zinc-800">
+          <div class="text-violet-400 text-lg mb-1">📁 Full Batch Folders</div>
+          <p class="text-xs text-zinc-400">Process hundreds of photos or videos at once and download as a single ZIP.</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border border-zinc-800">
+          <div class="text-emerald-400 text-lg mb-1">🎵 Audio Preserved</div>
+          <p class="text-xs text-zinc-400">Videos retain their original pristine audio tracks with synchronized frames.</p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PROCESSING VIEW -->
+    <div id="view-processing" class="hidden space-y-6">
+      
+      <!-- Progress Card -->
+      <div class="glass-panel glow-purple rounded-2xl p-8 border border-zinc-700/50 shadow-2xl space-y-6">
+        
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+              <span id="job-title-status">Processing Batch</span>
+              <span id="job-status-badge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">RUNNING</span>
+            </h2>
+            <p class="text-xs text-zinc-400 mt-0.5">Job ID: <span id="job-id-display" class="font-mono text-zinc-300"></span></p>
+          </div>
+          <div class="text-right">
+            <span id="overall-percentage" class="text-3xl font-extrabold text-indigo-400 font-mono">0%</span>
+          </div>
+        </div>
+
+        <!-- Overall Progress Bar -->
+        <div class="w-full bg-zinc-900 rounded-full h-3.5 overflow-hidden border border-zinc-800 p-0.5">
+          <div id="progress-bar-fill" class="bg-gradient-to-r from-indigo-500 to-violet-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+
+        <!-- Stats Counter -->
+        <div class="grid grid-cols-4 gap-3 text-center">
+          <div class="bg-zinc-900/60 rounded-xl p-3 border border-zinc-800">
+            <p class="text-[11px] text-zinc-400">Total Files</p>
+            <p id="stat-total" class="text-xl font-bold text-white font-mono">0</p>
+          </div>
+          <div class="bg-zinc-900/60 rounded-xl p-3 border border-zinc-800">
+            <p class="text-[11px] text-emerald-400">Completed</p>
+            <p id="stat-completed" class="text-xl font-bold text-emerald-400 font-mono">0</p>
+          </div>
+          <div class="bg-zinc-900/60 rounded-xl p-3 border border-zinc-800">
+            <p class="text-[11px] text-indigo-400">In Progress</p>
+            <p id="stat-processing" class="text-xl font-bold text-indigo-400 font-mono">0</p>
+          </div>
+          <div class="bg-zinc-900/60 rounded-xl p-3 border border-zinc-800">
+            <p class="text-[11px] text-rose-400">Failed</p>
+            <p id="stat-failed" class="text-xl font-bold text-rose-400 font-mono">0</p>
+          </div>
+        </div>
+
+        <!-- Result Action Banner (when finished) -->
+        <div id="completion-banner" class="hidden p-5 rounded-xl bg-gradient-to-r from-indigo-950/80 to-purple-950/80 border border-indigo-700/60 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-lg">✓</div>
+            <div>
+              <h3 class="text-sm font-bold text-white">Batch Processing Completed!</h3>
+              <p class="text-xs text-zinc-300">All media files have been cleaned and bundled into a ZIP archive.</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 w-full md:w-auto">
+            <a id="btn-download-zip" href="#" download class="flex-1 md:flex-none px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs shadow-lg shadow-emerald-500/20 text-center flex items-center justify-center gap-2 transition active:scale-95">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download Cleaned ZIP
+            </a>
+            <button type="button" id="btn-new-batch" class="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition">
+              New Batch
+            </button>
+          </div>
+        </div>
+
+        <!-- File-by-File Breakdown List -->
+        <div class="space-y-3">
+          <h3 class="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center justify-between">
+            <span>Files in Batch</span>
+            <span id="files-counter" class="text-zinc-500 text-[11px]">0 files</span>
+          </h3>
+
+          <div id="files-list" class="max-h-80 overflow-y-auto space-y-2 pr-1">
+            <!-- Dynamically populated rows -->
+          </div>
+        </div>
+
+        <!-- Cancel Job Button -->
+        <div id="cancel-row" class="pt-2 text-center">
+          <button type="button" id="btn-cancel-job" class="text-xs text-zinc-500 hover:text-rose-400 transition">
+            Cancel Processing and Delete Files
+          </button>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Script logic -->
+  <script>
+    // State
+    let selectedFiles = [];
+    let currentJobId = null;
+    let sseEventSource = null;
+    let pollInterval = null;
+
+    // DOM Elements
+    const dropZone = document.getElementById('drop-zone');
+    const inputFolder = document.getElementById('input-folder');
+    const inputZip = document.getElementById('input-zip');
+    const btnSelectFolder = document.getElementById('btn-select-folder');
+    const btnSelectZip = document.getElementById('btn-select-zip');
+    const selectedFilesBar = document.getElementById('selected-files-bar');
+    const selectedCount = document.getElementById('selected-count');
+    const selectedSummary = document.getElementById('selected-summary');
+    const selectedDetails = document.getElementById('selected-details');
+    const btnClearSelection = document.getElementById('btn-clear-selection');
+    const btnStartProcess = document.getElementById('btn-start-process');
+    
+    const selectPreset = document.getElementById('select-preset');
+    const presetDesc = document.getElementById('preset-desc');
+    const btnToggleAdvanced = document.getElementById('btn-toggle-advanced');
+    const advancedPanel = document.getElementById('advanced-panel');
+    const advancedArrow = document.getElementById('advanced-arrow');
+    const inputGain = document.getElementById('input-gain');
+    const gainVal = document.getElementById('gain-val');
+    const inputOffsetX = document.getElementById('input-offset-x');
+    const offsetXVal = document.getElementById('offset-x-val');
+    const inputOffsetY = document.getElementById('input-offset-y');
+    const offsetYVal = document.getElementById('offset-y-val');
+
+    const viewUpload = document.getElementById('view-upload');
+    const viewProcessing = document.getElementById('view-processing');
+    const jobTitleStatus = document.getElementById('job-title-status');
+    const jobStatusBadge = document.getElementById('job-status-badge');
+    const jobIdDisplay = document.getElementById('job-id-display');
+    const overallPercentage = document.getElementById('overall-percentage');
+    const progressBarFill = document.getElementById('progress-bar-fill');
+    const statTotal = document.getElementById('stat-total');
+    const statCompleted = document.getElementById('stat-completed');
+    const statProcessing = document.getElementById('stat-processing');
+    const statFailed = document.getElementById('stat-failed');
+    const completionBanner = document.getElementById('completion-banner');
+    const btnDownloadZip = document.getElementById('btn-download-zip');
+    const btnNewBatch = document.getElementById('btn-new-batch');
+    const btnCancelJob = document.getElementById('btn-cancel-job');
+    const cancelRow = document.getElementById('cancel-row');
+    const filesList = document.getElementById('files-list');
+    const filesCounter = document.getElementById('files-counter');
+
+    // Preset Descriptions
+    const PRESET_DESCRIPTIONS = {
+      'auto': 'Standard Gemini 1.5 & 2.0 default formula (gain 1.0)',
+      'nano_banana': 'Calibrated for Nano Banana model images (gain 1.05)',
+      'veo3': 'Calibrated for Google Veo video watermarks (gain 0.85, offset -8,-8)',
+      'flow': 'Calibrated for Flow model outputs (gain 0.9, offset -4,-4)',
+      'omni': 'Calibrated for Gemini Omni multimodal (gain 0.95)'
+    };
+
+    selectPreset.addEventListener('change', () => {
+      presetDesc.textContent = PRESET_DESCRIPTIONS[selectPreset.value] || '';
+    });
+
+    // Advanced Sliders Sync
+    inputGain.addEventListener('input', () => gainVal.textContent = parseFloat(inputGain.value).toFixed(2));
+    inputOffsetX.addEventListener('input', () => offsetXVal.textContent = inputOffsetX.value);
+    inputOffsetY.addEventListener('input', () => offsetYVal.textContent = inputOffsetY.value);
+
+    btnToggleAdvanced.addEventListener('click', () => {
+      const isHidden = advancedPanel.classList.toggle('hidden');
+      advancedArrow.style.transform = isHidden ? 'rotate(0deg)' : 'rotate(90deg)';
+    });
+
+    // File Selection Handlers
+    btnSelectFolder.addEventListener('click', () => inputFolder.click());
+    btnSelectZip.addEventListener('click', () => inputZip.click());
+    dropZone.addEventListener('click', () => inputZip.click());
+
+    inputFolder.addEventListener('change', (e) => handleFiles(Array.from(e.target.files)));
+    inputZip.addEventListener('change', (e) => handleFiles(Array.from(e.target.files)));
+
+    // Drag and Drop
+    ['dragenter', 'dragover'].forEach(name => {
+      dropZone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('border-indigo-500', 'bg-zinc-900/90');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+      dropZone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-indigo-500', 'bg-zinc-900/90');
+      });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFiles(Array.from(e.dataTransfer.files));
+      }
+    });
+
+    function handleFiles(files) {
+      if (!files || files.length === 0) return;
+      selectedFiles = files;
+      
+      const isZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
+      selectedCount.textContent = files.length;
+      
+      if (isZip) {
+        selectedSummary.textContent = files[0].name;
+        selectedDetails.textContent = `ZIP Archive (${formatBytes(files[0].size)})`;
+      } else {
+        const images = files.filter(f => isImage(f.name)).length;
+        const videos = files.filter(f => isVideo(f.name)).length;
+        const totalSize = files.reduce((acc, f) => acc + f.size, 0);
+        selectedSummary.textContent = `${files.length} items selected`;
+        selectedDetails.textContent = `${images} images, ${videos} videos • ${formatBytes(totalSize)}`;
+      }
+
+      selectedFilesBar.classList.remove('hidden');
+      btnStartProcess.disabled = false;
+    }
+
+    btnClearSelection.addEventListener('click', () => {
+      selectedFiles = [];
+      inputFolder.value = '';
+      inputZip.value = '';
+      selectedFilesBar.classList.add('hidden');
+      btnStartProcess.disabled = true;
+    });
+
+    function isImage(name) {
+      return /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(name);
+    }
+
+    function isVideo(name) {
+      return /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(name);
+    }
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Start Batch Upload
+    btnStartProcess.addEventListener('click', async () => {
+      if (!selectedFiles || selectedFiles.length === 0) return;
+
+      btnStartProcess.disabled = true;
+      btnStartProcess.textContent = "Uploading & Preparing...";
+
+      const formData = new FormData();
+      const isZip = selectedFiles.length === 1 && selectedFiles[0].name.toLowerCase().endsWith('.zip');
+
+      if (isZip) {
+        formData.append('file', selectedFiles[0]);
+      } else {
+        for (const f of selectedFiles) {
+          // Preserve webkitRelativePath if available
+          const filename = f.webkitRelativePath || f.name;
+          formData.append('files', f, filename);
+        }
+      }
+
+      formData.append('preset', selectPreset.value);
+      formData.append('gain', inputGain.value);
+      formData.append('offset_x', inputOffsetX.value);
+      formData.append('offset_y', inputOffsetY.value);
+
+      try {
+        const res = await fetch('/api/v1/jobs', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || 'Failed to create job');
+        }
+
+        const data = await res.json();
+        currentJobId = data.job_id;
+
+        // Switch View to Processing
+        viewUpload.classList.add('hidden');
+        viewProcessing.classList.remove('hidden');
+        jobIdDisplay.textContent = currentJobId;
+
+        // Connect Progress Listener
+        startTracking(currentJobId);
+
+      } catch (err) {
+        alert('Upload Error: ' + err.message);
+        btnStartProcess.disabled = false;
+        btnStartProcess.textContent = "Start Batch Watermark Removal";
+      }
+    });
+
+    // Real-Time Progress Tracking (SSE with Polling Fallback)
+    function startTracking(jobId) {
+      if (window.EventSource) {
+        sseEventSource = new EventSource(`/api/v1/jobs/${jobId}/events`);
+        sseEventSource.onmessage = (e) => {
+          try {
+            const jobData = JSON.parse(e.data);
+            updateUI(jobData);
+          } catch (err) {
+            console.error('Error parsing SSE:', err);
+          }
+        };
+
+        sseEventSource.onerror = () => {
+          // Fallback to polling if SSE connection drops
+          console.warn('SSE connection closed. Falling back to HTTP polling.');
+          if (sseEventSource) {
+            sseEventSource.close();
+            sseEventSource = null;
+          }
+          if (!pollInterval) {
+            pollInterval = setInterval(() => pollJob(jobId), 1500);
+          }
+        };
+      } else {
+        pollInterval = setInterval(() => pollJob(jobId), 1500);
+      }
+    }
+
+    async function pollJob(jobId) {
+      try {
+        const res = await fetch(`/api/v1/jobs/${jobId}`);
+        if (!res.ok) return;
+        const job = await res.json();
+        updateUI(job);
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    }
+
+    function updateUI(job) {
+      if (!job) return;
+
+      const progress = job.progress || {};
+      const pct = progress.percent || 0;
+      
+      overallPercentage.textContent = Math.round(pct) + '%';
+      progressBarFill.style.width = pct + '%';
+
+      statTotal.textContent = progress.total || 0;
+      statCompleted.textContent = progress.completed || 0;
+      statProcessing.textContent = progress.processing || 0;
+      statFailed.textContent = progress.failed || 0;
+
+      jobStatusBadge.textContent = job.status;
+      if (job.status === 'COMPLETED') {
+        jobStatusBadge.className = 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        jobTitleStatus.textContent = 'Batch Completed';
+      } else if (job.status === 'FAILED') {
+        jobStatusBadge.className = 'text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30';
+        jobTitleStatus.textContent = 'Job Failed';
+      }
+
+      // Update Files List
+      renderFileList(job.files || []);
+
+      // If finished
+      if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
+        if (sseEventSource) {
+          sseEventSource.close();
+          sseEventSource = null;
+        }
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+
+        if (job.status === 'COMPLETED') {
+          completionBanner.classList.remove('hidden');
+          btnDownloadZip.href = job.download_url || `/api/v1/jobs/${job.job_id}/download`;
+          cancelRow.classList.add('hidden');
+        } else if (job.status === 'FAILED') {
+          alert('Batch processing stopped with error: ' + (job.error_message || 'Unknown error'));
+        }
+      }
+    }
+
+    function renderFileList(files) {
+      filesCounter.textContent = `${files.length} files`;
+      filesList.innerHTML = '';
+
+      files.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'flex items-center justify-between p-3 rounded-xl bg-zinc-900/40 border border-zinc-800 text-xs';
+
+        const isImg = f.media_type === 'image';
+        const typeBadge = isImg 
+          ? '<span class="text-[10px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">IMG</span>'
+          : '<span class="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">VID</span>';
+
+        let statusBadge = '';
+        if (f.status === 'COMPLETED') {
+          statusBadge = '<span class="text-emerald-400 font-semibold flex items-center gap-1">✓ Done</span>';
+        } else if (f.status === 'PROCESSING') {
+          statusBadge = `<span class="text-indigo-400 animate-pulse font-medium">${f.status_text || 'Processing...'}</span>`;
+        } else if (f.status === 'FAILED') {
+          statusBadge = `<span class="text-rose-400 font-semibold" title="${f.error_message || ''}">✗ Failed</span>`;
+        } else {
+          statusBadge = '<span class="text-zinc-500">Queued</span>';
+        }
+
+        item.innerHTML = `
+          <div class="flex items-center gap-2.5 overflow-hidden pr-3">
+            ${typeBadge}
+            <span class="truncate font-medium text-zinc-200" title="${f.original_filename}">${f.original_filename}</span>
+          </div>
+          <div class="flex items-center gap-3 flex-shrink-0">
+            ${statusBadge}
+            ${f.status === 'COMPLETED' ? `<a href="/api/v1/jobs/${currentJobId}/preview/${f.id}" target="_blank" class="text-zinc-400 hover:text-white transition">View</a>` : ''}
+          </div>
+        `;
+        filesList.appendChild(item);
+      });
+    }
+
+    // Cancel Job
+    btnCancelJob.addEventListener('click', async () => {
+      if (!confirm('Are you sure you want to cancel this batch?')) return;
+      try {
+        await fetch(`/api/v1/jobs/${currentJobId}`, { method: 'DELETE' });
+        location.reload();
+      } catch (e) {
+        alert('Failed to cancel: ' + e.message);
+      }
+    });
+
+    // Reset for New Batch
+    btnNewBatch.addEventListener('click', () => {
+      location.reload();
+    });
+
+  </script>
+</body>
+</html>
