@@ -69,6 +69,36 @@ const ALPHA_THRESHOLD = 0.002;
 const MAX_ALPHA = 0.99;
 const LOGO_VALUE = 255;
 
+function applySmartTouchup(imageData, width, height, position, alphaMap, gain) {
+  if (gain >= 0.88) return; // Full-res clean images do not require compression touch-up
+  const { x, y, width: w, height: h } = position;
+  const copy = new Uint8ClampedArray(imageData.data);
+
+  for (let row = 1; row < h - 1; row++) {
+    for (let col = 1; col < w - 1; col++) {
+      const alphaIdx = row * w + col;
+      const a = alphaMap[alphaIdx] * gain;
+      if (a < 0.08) continue;
+
+      const imgIdx = ((y + row) * width + (x + col)) * 4;
+      const weight = Math.min(0.55, Math.pow(a, 0.8) * 0.55);
+
+      for (let c = 0; c < 3; c++) {
+        // 3x3 edge-preserving neighborhood smoothing
+        let sum = 0;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const nIdx = ((y + row + dr) * width + (x + col + dc)) * 4 + c;
+            sum += copy[nIdx];
+          }
+        }
+        const smoothVal = sum / 9.0;
+        imageData.data[imgIdx + c] = Math.round(imageData.data[imgIdx + c] * (1.0 - weight) + smoothVal * weight);
+      }
+    }
+  }
+}
+
 function removeWatermark(imageData, alphaMap, position, options = {}) {
   const { x, y, width, height } = position;
   const gain = Number.isFinite(options.alphaGain) && options.alphaGain > 0
@@ -91,6 +121,9 @@ function removeWatermark(imageData, alphaMap, position, options = {}) {
       }
     }
   }
+
+  // Recheck & Touch-up pass for residual compression ringing
+  applySmartTouchup(imageData, imageData.width, imageData.height, position, alphaMap, gain);
 }
 
 function getWatermarkInfo(width, height) {
@@ -712,6 +745,68 @@ function evaluateCandidateMatch(imageData, width, height, bgImg, box) {
   return { score: Math.max(0, fusedScore), variance: varL };
 }
 
+function findOptimalGainJs(imageData, width, height, x, y, size, bgImg) {
+  const template = getAlphaTemplateData(bgImg, size);
+  const alphas = template.alphas;
+
+  let bestGain = 0.6;
+  let bestScore = Infinity;
+
+  const candidateGains = [0.4, 0.45, 0.5, 0.55, 0.57, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0];
+
+  for (const g of candidateGains) {
+    let sumL = 0, sumA = 0, sumL2 = 0, sumA2 = 0, sumLA = 0;
+    let count = 0;
+
+    for (let r = 0; r < size; r++) {
+      const imgRow = y + r;
+      if (imgRow < 0 || imgRow >= height) continue;
+      for (let c = 0; c < size; c++) {
+        const imgCol = x + c;
+        if (imgCol < 0 || imgCol >= width) continue;
+
+        const imgIdx = (imgRow * width + imgCol) * 4;
+        const alphaIdx = r * size + c;
+        const a = Math.min(alphas[alphaIdx] * g, 0.99);
+
+        // Compute mathematically restored luminance
+        const rVal = (imageData.data[imgIdx] - a * 255) / (1 - a);
+        const gVal = (imageData.data[imgIdx + 1] - a * 255) / (1 - a);
+        const bVal = (imageData.data[imgIdx + 2] - a * 255) / (1 - a);
+        const lum = Math.max(0, Math.min(255, 0.299 * rVal + 0.587 * gVal + 0.114 * bVal));
+        const alpha = alphas[alphaIdx];
+
+        sumL += lum;
+        sumA += alpha;
+        sumL2 += lum * lum;
+        sumA2 += alpha * alpha;
+        sumLA += lum * alpha;
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      const meanL = sumL / count;
+      const meanA = sumA / count;
+      const varL = sumL2 / count - meanL * meanL;
+      const varA = sumA2 / count - meanA * meanA;
+      const covLA = sumLA / count - meanL * meanA;
+
+      let corr = 0;
+      if (varL > 0.001 && varA > 0.001) {
+        corr = covLA / Math.sqrt(varL * varA);
+      }
+      const absScore = Math.abs(corr);
+      if (absScore < bestScore) {
+        bestScore = absScore;
+        bestGain = g;
+      }
+    }
+  }
+
+  return bestGain;
+}
+
 function detectWatermarkCandidate(imageData, width, height, bgImg) {
   const minDim = Math.min(width, height);
   const baseRatio = minDim / 1536;
@@ -742,35 +837,40 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
       },
       gain: 1.0,
       prior: 1.04
-    },
-    // 3. Fixed Standard (96px watermark regardless of crop/resize)
-    {
-      presetKey: 'new',
-      name: 'Gemini & Nano Banana (Fixed 96px Inset)',
-      baseSize: 96,
-      calcPos: (s) => {
-        const m = minDim >= 1400 ? 192 : Math.round(128 * Math.max(0.5, minDim / 1024));
-        return { x: Math.max(0, width - m - s), y: Math.max(0, height - m - s) };
-      },
-      gain: 0.6,
-      prior: 1.02
-    },
-    // 4. Fixed 96px Classic Corner
-    {
-      presetKey: 'classic',
-      name: 'Classic Corner (Fixed 96px)',
-      baseSize: 96,
-      calcPos: (s) => {
-        const m = minDim >= 1024 ? 64 : 32;
-        return { x: Math.max(0, width - m - s), y: Math.max(0, height - m - s) };
-      },
-      gain: 1.0,
-      prior: 1.01
     }
   ];
 
-  // Multi-Scale search pyramid: 0.55x to 1.70x
-  const scalePyramid = [0.55, 0.70, 0.85, 1.00, 1.15, 1.30, 1.50, 1.70];
+  if (minDim >= 1200) {
+    layoutFamilies.push(
+      // 3. Fixed Standard (96px watermark for full-resolution)
+      {
+        presetKey: 'new',
+        name: 'Gemini & Nano Banana (Fixed 96px Inset)',
+        baseSize: 96,
+        calcPos: (s) => {
+          const m = minDim >= 1400 ? 192 : Math.round(128 * Math.max(0.5, minDim / 1024));
+          return { x: Math.max(0, width - m - s), y: Math.max(0, height - m - s) };
+        },
+        gain: 0.6,
+        prior: 1.02
+      },
+      // 4. Fixed 96px Classic Corner
+      {
+        presetKey: 'classic',
+        name: 'Classic Corner (Fixed 96px)',
+        baseSize: 96,
+        calcPos: (s) => {
+          const m = minDim >= 1024 ? 64 : 32;
+          return { x: Math.max(0, width - m - s), y: Math.max(0, height - m - s) };
+        },
+        gain: 1.0,
+        prior: 1.01
+      }
+    );
+  }
+
+  // Multi-Scale search pyramid around expected scale
+  const scalePyramid = [0.75, 0.90, 1.00, 1.10, 1.25];
 
   let bestMatch = null;
   let bestScore = -1;
@@ -804,11 +904,9 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
     let refinedScore = bestMatch.score;
 
     const fineSizes = [
-      Math.max(16, Math.round(bestMatch.size * 0.90)),
-      Math.max(16, Math.round(bestMatch.size * 0.95)),
+      Math.max(16, Math.round(bestMatch.size * 0.92)),
       bestMatch.size,
-      Math.min(Math.min(width, height) - 8, Math.round(bestMatch.size * 1.05)),
-      Math.min(Math.min(width, height) - 8, Math.round(bestMatch.size * 1.10))
+      Math.min(Math.min(width, height) - 8, Math.round(bestMatch.size * 1.08))
     ];
     const uniqueSizes = [...new Set(fineSizes)];
 
@@ -831,16 +929,17 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
     }
 
     const calculatedScale = Math.round((refinedSize / base.size) * 100) / 100;
+    const optimalGain = findOptimalGainJs(imageData, width, height, refinedX, refinedY, refinedSize, bgImg);
 
     return {
       matchFound: refinedScore >= 0.10,
       score: Math.min(1.0, refinedScore),
       presetKey: bestMatch.layout.presetKey,
-      name: `${bestMatch.layout.name} (${refinedSize}px)`,
+      name: `${bestMatch.layout.name} (${refinedSize}px, ${optimalGain.toFixed(2)}x)`,
       offsetX: refinedX - base.x,
       offsetY: refinedY - base.y,
       sizeScale: Math.max(0.5, Math.min(2.5, calculatedScale)),
-      gain: bestMatch.layout.gain || 0.6,
+      gain: optimalGain,
     };
   }
 

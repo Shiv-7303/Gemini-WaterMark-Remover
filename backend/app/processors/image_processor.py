@@ -5,7 +5,7 @@ from PIL import Image, ImageOps
 
 from .base import BaseMediaProcessor
 from .alpha_maps.alpha_loader import AlphaMapCache
-from .watermark_math import detect_watermark_box, remove_watermark_numpy, PRESETS
+from .watermark_math import detect_watermark_box, remove_watermark_numpy, recheck_and_refine_watermark, PRESETS
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 
@@ -76,13 +76,17 @@ class ImageProcessor(BaseMediaProcessor):
 
             alpha = self.alpha_cache.get(box.size)
 
-            cleaned_arr = remove_watermark_numpy(
+            cleaned_arr = recheck_and_refine_watermark(
                 image=img_arr,
                 alpha_map=alpha,
                 x=box.x,
                 y=box.y,
                 gain=effective_gain,
+                residual_score=box.residual_score,
             )
+
+            if progress_cb:
+                progress_cb(75.0, "Recheck & refinement complete")
 
             if progress_cb:
                 progress_cb(80.0, "Saving output file")

@@ -31,7 +31,7 @@ class JobManager:
     def create_job(
         self,
         preset: str = "auto",
-        gain: float = 1.0,
+        gain: Optional[float] = None,
         offset_x: int = 0,
         offset_y: int = 0,
         size_scale: float = 1.0,

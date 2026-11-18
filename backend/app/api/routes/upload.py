@@ -33,7 +33,11 @@ async def create_and_upload_job(
     if preset_key not in PRESETS:
         preset_key = "auto"
 
-    preset_gain = PRESETS[preset_key]["gain"] if (gain is None or gain <= 0) else gain
+    if preset_key == "auto":
+        # When preset is auto, default to None so dynamic gain detector picks optimal gain per image
+        preset_gain = gain if (gain is not None and gain > 0) else None
+    else:
+        preset_gain = gain if (gain is not None and gain > 0) else PRESETS[preset_key].get("gain", 1.0)
 
     # Check that at least one file was provided
     has_zip = file is not None and file.filename

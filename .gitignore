@@ -2,17 +2,18 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.pytest_cache/
+*.pyc
 
-# Local batch jobs & data
+# Local runtime data
 data/
-testing images/
-*.zip
-cleaned_user_image.png
-test_out_*.png
-test_*.png
-
-# Logs / misc
 *.log
 .DS_Store
 .autoclaw
+
+# Temporary test images & archives
+*.zip
+testing images/
+cleaned_*.png
+recheck_*.png
+tests/fixtures/cleaned_*.png
+tests/fixtures/test_*.png
