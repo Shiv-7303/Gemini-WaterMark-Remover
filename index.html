@@ -260,618 +260,493 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="dns-prefetch" href="https://code.iconify.design">
   <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css" />
   <script defer src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
 </head>
 
 <body>
+  <div class="app">
+    <!-- Top Bar 56px -->
+    <header class="topbar">
+      <div class="wordmark" title="Unmark — Lossless Watermark Removal">
+        <span class="wordmark-dot" aria-hidden="true"></span>
+        <span>Unmark</span>
+      </div>
 
-  <!-- Top Navigation Header -->
-  <header class="app-header">
-    <div class="header-container">
-      <a href="./" class="brand" title="Gemini Watermark Remover">
-        <img src="./assets/logo.webp" alt="Gemini Watermark Remover Logo" width="42" height="42" decoding="async"
-          fetchpriority="high" style="object-fit: cover;" />
-        <div class="brand-text">
-          <span class="brand-title">Gemini Watermark Remover</span>
-        </div>
-      </a>
+      <div class="segmented" role="tablist" aria-label="Tool Mode">
+        <button type="button" class="segmented-pill active" id="tab-image" data-mode="image" role="tab" aria-selected="true" aria-controls="panel-image" title="Image Remover (1)">
+          <iconify-icon icon="ph:image-bold" width="14"></iconify-icon>
+          <span>Image</span>
+        </button>
+        <button type="button" class="segmented-pill" id="tab-video" data-mode="video" role="tab" aria-selected="false" aria-controls="panel-video" title="Video Remover (2)">
+          <iconify-icon icon="ph:video-bold" width="14"></iconify-icon>
+          <span>Video</span>
+        </button>
+        <button type="button" class="segmented-pill" id="tab-batch" data-mode="batch" role="tab" aria-selected="false" aria-controls="panel-batch" title="Batch Folder / ZIP Remover (3)">
+          <iconify-icon icon="ph:folders-bold" width="14"></iconify-icon>
+          <span>Batch</span>
+        </button>
+      </div>
 
-      <!-- Desktop Navigation Menu -->
-      <nav class="nav-menu" aria-label="Main Navigation">
-        <a href="#panel-video" class="nav-link" id="nav-link-video">Video Remover</a>
-        <a href="#how-it-works" class="nav-link">How it Works</a>
-        <a href="#faq" class="nav-link">FAQ</a>
-        <a href="./about.html" class="nav-link">About</a>
+      <div class="topbar-right">
+        <button type="button" class="btn btn-ghost engine-btn" id="btn-engine-status" aria-haspopup="true" aria-expanded="false" title="Execution Engine">
+          <span class="dot"></span>
+          <span id="engine-status-text">In browser</span>
+        </button>
+        <button type="button" class="icon-btn" id="btn-open-settings" aria-label="Settings" title="Settings (,)">
+          <iconify-icon icon="ph:gear-six-bold" width="18"></iconify-icon>
+        </button>
+        <button type="button" class="icon-btn" id="btn-open-shortcuts" aria-label="Shortcuts" title="Keyboard Shortcuts (?)">
+          <iconify-icon icon="ph:keyboard-bold" width="18"></iconify-icon>
+        </button>
+      </div>
+    </header>
 
-        <!-- Tools Dropdown -->
-        <div class="nav-dropdown" id="tools-dropdown">
-          <button type="button" class="nav-link nav-dropdown-btn" id="tools-dropdown-btn" aria-expanded="false"
-            aria-haspopup="true">
-            <span>Tools</span>
-            <iconify-icon icon="ph:caret-down-bold" class="dropdown-arrow" width="12"></iconify-icon>
-          </button>
-          <div class="dropdown-menu" id="tools-dropdown-menu">
-            <a href="https://ishara-madu.github.io/online-image-converter/" target="_blank" rel="noopener noreferrer"
-              class="dropdown-item promo-item"
-              data-auto-favicon="https://ishara-madu.github.io/online-image-converter/">
-              <div class="dropdown-item-icon promo-icon">
-                <img src="https://ishara-madu.github.io/online-image-converter/favicon.ico"
-                  onerror="this.onerror=null; this.src='https://www.google.com/s2/favicons?domain=ishara-madu.github.io&amp;sz=64';"
-                  alt="Online Image Converter Favicon" class="tool-favicon-img" width="22" height="22" loading="lazy" />
+    <!-- Main Workspace Grid -->
+    <main class="workspace">
+      <!-- STAGE (Left) -->
+      <section class="stage" id="stage" aria-label="Media Stage">
+
+        <!-- ── Image Panel ── -->
+        <div id="panel-image" class="stage-mode-view">
+          <div class="dropzone" id="img-dropzone" tabindex="0" role="button" aria-label="Drop image or click to browse">
+            <div class="dropzone-container">
+              <div class="dropzone-icon">
+                <iconify-icon icon="ph:upload-simple-bold" width="32"></iconify-icon>
               </div>
-              <div class="dropdown-item-content">
-                <div class="dropdown-item-title-row">
-                  <span class="dropdown-item-title">Online Image Converter</span>
-                  <span class="badge-featured">Free &amp; Fast</span>
+              <h2 class="drop-title">Drop image here or browse</h2>
+              <p class="drop-sub">PNG, JPG, WebP up to 32 MB • 100% on device</p>
+              <p class="privacy-line">No images leave your device. Zero inpainting or blur.</p>
+              <input id="img-input" type="file" accept="image/*" class="hidden" />
+            </div>
+          </div>
+
+          <div id="img-stage-loaded" class="stage-media-card hidden">
+            <div class="compare" id="img-compare" data-split="50">
+              <div class="layer layer-clean">
+                <canvas id="img-main-canvas"></canvas>
+              </div>
+              <div class="layer layer-orig" id="img-layer-orig">
+                <img id="img-staging-preview" src="" alt="Original Image" />
+              </div>
+              <div class="compare-line" id="img-compare-line" style="left: 50%;">
+                <div class="compare-handle" aria-label="Drag compare slider">
+                  <div class="compare-hit-area"></div>
                 </div>
-                <p class="dropdown-item-desc">Convert WebP, PNG, JPG, AVIF, GIF with zero quality loss.</p>
               </div>
-              <iconify-icon icon="ph:arrow-square-out-bold" width="16" class="dropdown-ext-icon"></iconify-icon>
-            </a>
-
-            <div class="dropdown-divider"></div>
-
-            <a href="#" class="dropdown-item active-tool">
-              <div class="dropdown-item-icon active-icon">
-                <img src="./assets/favicon-96x96.png" alt="Gemini Watermark Remover Favicon" class="tool-favicon-img"
-                  width="22" height="22" loading="lazy" />
+              <div class="loupe hidden" id="img-loupe">
+                <canvas class="loupe-canvas" id="img-zoom-cleaned-canvas" width="200" height="200"></canvas>
               </div>
-              <div class="dropdown-item-content">
-                <div class="dropdown-item-title-row">
-                  <span class="dropdown-item-title">Gemini Watermark Remover</span>
-                  <span class="badge-current">Current</span>
+            </div>
+
+            <div class="stage-toolbar">
+              <div class="stage-toolbar-left">
+                <button type="button" class="btn btn-ghost btn-sm active" id="btn-toggle-split" title="Toggle Split View (C)">
+                  <iconify-icon icon="ph:columns-bold" width="14"></iconify-icon>
+                  <span>Split</span>
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-hold-orig" title="Hold Original (\)">
+                  <iconify-icon icon="ph:eye-bold" width="14"></iconify-icon>
+                  <span>Hold Original</span>
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-loupe" title="Toggle 4x Loupe (Z)">
+                  <iconify-icon icon="ph:magnifying-glass-plus-bold" width="14"></iconify-icon>
+                  <span>4x Loupe</span>
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-img-change-file-tuner">
+                  <iconify-icon icon="ph:arrows-clockwise-bold" width="14"></iconify-icon>
+                  <span>Replace</span>
+                </button>
+              </div>
+              <div class="stage-toolbar-right">
+                <span class="num text-xs text-3" id="lbl-zoom-level">Fit</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-fit-screen">Reset view</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Video Panel ── -->
+        <div id="panel-video" class="stage-mode-view hidden">
+          <div class="dropzone" id="video-dropzone" tabindex="0" role="button" aria-label="Drop video or click to browse">
+            <div class="dropzone-container">
+              <div class="dropzone-icon">
+                <iconify-icon icon="ph:video-camera-bold" width="32"></iconify-icon>
+              </div>
+              <h2 class="drop-title">Drop MP4 or MOV here or browse</h2>
+              <p class="drop-sub">Up to 500 MB • Audio preserved • Frame-by-frame alpha unblending</p>
+              <p class="privacy-line">100% processed on your device with WebCodecs.</p>
+              <input id="video-input" type="file" accept="video/*" class="hidden" />
+            </div>
+          </div>
+
+          <div id="video-stage-loaded" class="stage-media-card hidden">
+            <div class="video-stage-box" id="video-player-box">
+              <div class="video-frame-container">
+                <canvas id="video-main-canvas" class="video-canvas"></canvas>
+                <video id="video-src-element" playsinline class="hidden"></video>
+                <div id="video-status" class="hidden analyzing-box">
+                  <div class="scan-line"></div>
+                  <div style="position: absolute; bottom: 20px; left: 24px; right: 24px; text-align: center;">
+                    <div class="batch-progress-hairline"><div id="video-progress-bar" class="batch-progress-fill" style="width: 0%;"></div></div>
+                    <p id="video-progress-text" class="text-xs num text-2 mt-2">Encoding 0%</p>
+                  </div>
                 </div>
-                <p class="dropdown-item-desc">Remove Gemini, Flow &amp; Omni watermarks mathematically.</p>
               </div>
-            </a>
-          </div>
-        </div>
-      </nav>
-
-      <!-- Hamburger Menu Toggle Button (Mobile Only) -->
-      <button type="button" id="mobile-menu-btn" class="mobile-menu-toggle" aria-label="Toggle navigation menu"
-        aria-expanded="false">
-        <iconify-icon icon="ph:list-bold" class="icon-hamburger" width="22"></iconify-icon>
-        <iconify-icon icon="ph:x-bold" class="icon-close hidden" width="22"></iconify-icon>
-      </button>
-
-      <div id="header-actions" class="header-actions">
-        <!-- Mobile Navigation Menu (visible inside mobile dropdown) -->
-        <div class="mobile-nav-links">
-          <a href="#panel-video" class="mobile-nav-link" id="mobile-nav-link-video">
-            <iconify-icon icon="ph:video-bold" width="18"></iconify-icon>
-            <span>Video Remover</span>
-          </a>
-          <a href="#models-showcase" class="mobile-nav-link">
-            <iconify-icon icon="ph:cpu-bold" width="18"></iconify-icon>
-            <span>Supported Models</span>
-          </a>
-          <a href="#how-it-works" class="mobile-nav-link">
-            <iconify-icon icon="ph:info-bold" width="18"></iconify-icon>
-            <span>How it Works</span>
-          </a>
-          <a href="#guide" class="mobile-nav-link">
-            <iconify-icon icon="ph:book-open-bold" width="18"></iconify-icon>
-            <span>Removal Guide</span>
-          </a>
-          <a href="#comparison" class="mobile-nav-link">
-            <iconify-icon icon="ph:git-diff-bold" width="18"></iconify-icon>
-            <span>Comparison</span>
-          </a>
-          <a href="#features" class="mobile-nav-link">
-            <iconify-icon icon="ph:shield-check-bold" width="18"></iconify-icon>
-            <span>Features</span>
-          </a>
-          <a href="#faq" class="mobile-nav-link">
-            <iconify-icon icon="ph:question-bold" width="18"></iconify-icon>
-            <span>FAQ</span>
-          </a>
-          <a href="./about.html" class="mobile-nav-link">
-            <iconify-icon icon="ph:info-bold" width="18"></iconify-icon>
-            <span>About Us</span>
-          </a>
-          <a href="./contact.html" class="mobile-nav-link">
-            <iconify-icon icon="ph:envelope-simple-bold" width="18"></iconify-icon>
-            <span>Contact Us</span>
-          </a>
-
-          <div class="mobile-promo-card">
-            <div class="mobile-promo-header">
-              <span class="mobile-promo-label">Recommended Tool</span>
-              <span class="badge-featured">Free &amp; Fast</span>
-            </div>
-            <a href="https://ishara-madu.github.io/online-image-converter/" target="_blank" rel="noopener noreferrer"
-              class="mobile-promo-link" data-auto-favicon="https://ishara-madu.github.io/online-image-converter/">
-              <div class="dropdown-item-icon promo-icon">
-                <img src="https://ishara-madu.github.io/online-image-converter/favicon.ico"
-                  onerror="this.onerror=null; this.src='https://www.google.com/s2/favicons?domain=ishara-madu.github.io&amp;sz=64';"
-                  alt="Online Image Converter Favicon" class="tool-favicon-img" width="22" height="22" loading="lazy" />
+              <div class="video-transport-row">
+                <button type="button" class="icon-btn" id="btn-video-play" title="Play / Pause (Space)">
+                  <iconify-icon icon="ph:play-fill" width="16" id="icon-video-play"></iconify-icon>
+                </button>
+                <button type="button" class="icon-btn" id="btn-video-step-back" title="Back 1 frame (,)">
+                  <iconify-icon icon="ph:skip-back" width="14"></iconify-icon>
+                </button>
+                <button type="button" class="icon-btn" id="btn-video-step-forward" title="Forward 1 frame (.)">
+                  <iconify-icon icon="ph:skip-forward" width="14"></iconify-icon>
+                </button>
+                <div class="video-time-readout num text-xs" id="lbl-video-time">00:00.00 / 00:00.00</div>
+                <div class="video-timeline" id="video-timeline-track">
+                  <div class="timeline-played" id="video-timeline-played" style="width: 0%;"></div>
+                  <div class="timeline-thumb" id="video-timeline-thumb" style="left: 0%;"></div>
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-video-change-file-tuner">
+                  <span>Replace</span>
+                </button>
               </div>
-              <div class="mobile-promo-info">
-                <strong>Online Image Converter</strong>
-                <p>Convert WebP, PNG, JPG, AVIF in browser</p>
-              </div>
-              <iconify-icon icon="ph:arrow-square-out-bold" width="16" class="mobile-promo-ext"></iconify-icon>
-            </a>
-          </div>
-        </div>
-
-        <div class="header-action-buttons">
-          <a href="https://github.com/ishara-madu/gemini-watermark-remover" target="_blank" rel="noopener noreferrer"
-            class="btn-github" title="Star on GitHub">
-            <iconify-icon icon="ph:github-logo" width="18"></iconify-icon>
-            <iconify-icon icon="ph:star-fill" width="14" style="color: #eab308;"></iconify-icon>
-            <span id="star-count-num">--</span>
-            <span class="btn-github-label">Stars</span>
-          </a>
-          <a href="https://buymeacoffee.com/ishara.madu" target="_blank" rel="noopener noreferrer" class="btn-donate"
-            title="Support the project">
-            <iconify-icon icon="ph:heart-fill" width="16" style="color: #f43f5e;"></iconify-icon>
-            <span>Donate</span>
-          </a>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <main class="container">
-    <!-- Hero Section -->
-    <div class="hero-section">
-      <h1 class="hero-title">Free Gemini Watermark Remover &amp; Logo Remover</h1>
-      <p class="hero-description">
-        The fastest way to <strong>remove Gemini watermark from video</strong> and AI images online. Our 100% free
-        <strong>Google Gemini watermark remover</strong> cleanly unblends logos frame-by-frame with zero blur, no
-        sign-up, and original quality.
-      </p>
-      <div class="hero-badges">
-        <span class="hero-badge-pill"><iconify-icon icon="ph:sparkle-bold" width="15"
-            style="color: #059669;"></iconify-icon> 100% Free Gemini Watermark Remover</span>
-        <span class="hero-badge-pill"><iconify-icon icon="ph:image-square-bold" width="15"
-            style="color: #2563eb;"></iconify-icon> Gemini &amp; Nano Banana Images</span>
-        <a href="#panel-video" class="hero-badge-pill hero-badge-link" id="hero-badge-video-link"><iconify-icon
-            icon="ph:video-camera-bold" width="15" style="color: #7c3aed;"></iconify-icon> Gemini Video Watermark
-          Remover</a>
-        <span class="hero-badge-pill"><iconify-icon icon="ph:shield-check-bold" width="15"
-            style="color: #0d9488;"></iconify-icon> Private &amp; Lossless</span>
-      </div>
-    </div>
-
-    <!-- Left Decorative Background Frame -->
-    <div class="hero-bg-frame-container left" aria-hidden="true">
-      <div class="hero-bg-frame">
-        <img src="./assets/bg1.webp" alt="Gemini watermark removal preview illustration" class="hero-bg-img" width="250"
-          height="250" loading="lazy" decoding="async" fetchpriority="low" />
-      </div>
-    </div>
-
-    <!-- Right Decorative Background Frame -->
-    <div class="hero-bg-frame-container right" aria-hidden="true">
-      <div class="hero-bg-frame">
-        <img src="./assets/bg2.webp" alt="Veo 3 AI video watermark removal preview illustration" class="hero-bg-img"
-          width="350" height="350" loading="lazy" decoding="async" fetchpriority="low" />
-      </div>
-    </div>
-
-    <!-- Tab Switcher -->
-    <div class="tab-container">
-      <button id="tab-image" class="tab-btn active">
-        <iconify-icon icon="ph:image-bold" width="18"></iconify-icon>
-        <span>Image Remover</span>
-      </button>
-      <button id="tab-video" class="tab-btn">
-        <iconify-icon icon="ph:video-bold" width="18"></iconify-icon>
-        <span>Video Remover</span>
-      </button>
-      <button id="tab-batch" class="tab-btn">
-        <iconify-icon icon="ph:folders-bold" width="18"></iconify-icon>
-        <span>Batch Folder Remover</span>
-      </button>
-    </div>
-
-    <!-- Image Removal Panel -->
-    <section id="panel-image" class="card">
-      <div id="img-dropzone" class="dropzone">
-        <div class="dropzone-icon">
-          <iconify-icon icon="ph:upload-simple-bold"></iconify-icon>
-        </div>
-        <p class="dropzone-title">Upload or drag your Gemini or Nano Banana Image</p>
-        <p class="dropzone-sub">Supports PNG, JPG, WebP</p>
-        <input id="img-input" type="file" accept="image/*" class="hidden" />
-      </div>
-
-      <!-- Image Staging Card (After Upload, Before Tuner) -->
-      <div id="img-staging-card" class="staging-card hidden">
-        <div class="checker staging-preview-box">
-          <img id="img-staging-preview" src="" alt="Uploaded Gemini Image" />
-        </div>
-        <div class="staging-meta">
-          <p id="img-staging-filename" class="staging-filename"></p>
-          <p id="img-staging-dims" class="staging-dims"></p>
-        </div>
-        <div class="staging-actions">
-          <button id="btn-img-auto-detect" type="button" class="btn btn-primary">
-            <iconify-icon icon="ph:sparkle-bold" width="18"></iconify-icon>
-            <span>Try Auto Detect</span>
-          </button>
-          <button id="btn-img-change-file" type="button" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:arrows-clockwise" width="16"></iconify-icon>
-            <span>Change Image</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Image Tuner & Live Preview Container -->
-      <div id="img-tuner-container" class="tuner-container hidden">
-        <div id="img-detect-badge" class="detect-badge hidden"></div>
-        <div class="tuner-preview-row">
-          <div class="tuner-canvas-box main-box">
-            <span class="canvas-title">
-              <iconify-icon icon="ph:frame-corners" width="14"></iconify-icon>
-              Preview (Full Frame)
-            </span>
-            <div class="canvas-wrapper">
-              <canvas id="img-main-canvas"></canvas>
+              <div class="thumbnail-strip" id="video-thumbnail-strip"></div>
             </div>
           </div>
-          <div class="tuner-canvas-box zoom-box">
-            <div class="zoom-card">
-              <span class="canvas-title text-blue-600">
-                <iconify-icon icon="ph:magnifying-glass-plus" width="14"></iconify-icon>
-                Zoomed Original
-              </span>
-              <div class="canvas-wrapper">
-                <canvas id="img-zoom-canvas" width="200" height="200"></canvas>
+        </div>
+
+        <!-- ── Batch Panel ── -->
+        <div id="panel-batch" class="stage-mode-view hidden">
+          <div class="dropzone" id="batch-dropzone" tabindex="0" role="button" aria-label="Drop folder or ZIP">
+            <div class="dropzone-container">
+              <div class="dropzone-icon">
+                <iconify-icon icon="ph:folders-bold" width="32"></iconify-icon>
               </div>
-            </div>
-            <div class="zoom-card">
-              <span class="canvas-title text-green-600">
-                <iconify-icon icon="ph:check-circle" width="14"></iconify-icon>
-                Zoomed Cleaned
-              </span>
-              <div class="canvas-wrapper">
-                <canvas id="img-zoom-cleaned-canvas" width="200" height="200"></canvas>
+              <h2 class="drop-title">Drop images and videos, folders, or a ZIP</h2>
+              <p class="drop-sub">Process entire directories in bulk • 100% on your device</p>
+              <p class="privacy-line">No files leave your browser. Zero inpainting or blur.</p>
+              <input id="batch-folder-input" type="file" webkitdirectory directory multiple class="hidden" />
+              <input id="batch-file-input" type="file" accept=".zip,image/*,video/*" multiple class="hidden" />
+              <div style="display: flex; gap: 8px; justify-content: center; margin-top: 16px;">
+                <button type="button" id="btn-select-batch-folder" class="btn btn-secondary btn-sm">Select Folder</button>
+                <button type="button" id="btn-select-batch-zip" class="btn btn-secondary btn-sm">Select ZIP Archive</button>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Quick Select Model Presets -->
-        <div class="tuner-preset-row">
-          <span class="tuner-preset-label">Model Preset:</span>
-          <div class="tuner-preset-buttons">
-            <button type="button" class="btn-preset active" data-preset="new" id="btn-preset-img-nano">
-              <iconify-icon icon="ph:sparkle-bold"></iconify-icon> Gemini / Nano Banana (Adaptive)
-            </button>
-            <button type="button" class="btn-preset" data-preset="classic" id="btn-preset-img-classic">
-              <iconify-icon icon="ph:corners-out"></iconify-icon> Classic Corner (Fixed)
-            </button>
-          </div>
-        </div>
-
-        <div class="tuner-sliders mt-2">
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Strength (Gain)</span>
-              <span id="lbl-img-gain">0.60x</span>
-            </div>
-            <input type="range" id="slider-img-gain" min="0.1" max="3" step="0.05" value="0.6" />
-          </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Size Scale</span>
-              <span id="lbl-img-scale">1.00x</span>
-            </div>
-            <input type="range" id="slider-img-scale" min="0.5" max="2" step="0.05" value="1.0" />
-          </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Position X</span>
-              <span id="lbl-img-offset-x">-128px</span>
-            </div>
-            <input type="range" id="slider-img-offset-x" min="-250" max="150" step="1" value="-128" />
-          </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Position Y</span>
-              <span id="lbl-img-offset-y">-128px</span>
-            </div>
-            <input type="range" id="slider-img-offset-y" min="-250" max="150" step="1" value="-128" />
-          </div>
-        </div>
-
-        <div class="tuner-actions">
-          <button id="btn-img-change-file-tuner" class="btn btn-secondary text-xs" type="button">
-            <iconify-icon icon="ph:arrows-clockwise"></iconify-icon> Change Image
-          </button>
-          <button id="btn-img-reset-sliders" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:arrow-counter-clockwise"></iconify-icon> Reset Sliders
-          </button>
-          <button id="btn-img-export" class="btn btn-primary">
-            <iconify-icon icon="ph:eraser"></iconify-icon> Remove &amp; Export Image
-          </button>
-        </div>
-      </div>
-
-      <div id="img-results" class="hidden mt-4"></div>
-    </section>
-
-    <!-- Video Removal Panel -->
-    <section id="panel-video" class="card hidden">
-      <div id="video-dropzone" class="dropzone">
-        <div class="dropzone-icon">
-          <iconify-icon icon="ph:video-bold"></iconify-icon>
-        </div>
-        <p class="dropzone-title">Upload or drag a Gemini Omni, Google Flow, or Veo video</p>
-        <p class="dropzone-sub">Supports MP4, WebM, MOV</p>
-        <input id="video-input" type="file" accept="video/*" multiple class="hidden" />
-      </div>
-
-      <!-- Video Staging Card (After Upload, Before Tuner) -->
-      <div id="video-staging-card" class="staging-card hidden">
-        <div class="checker staging-preview-box">
-          <img id="video-staging-preview" src="" alt="Uploaded Video Preview" />
-        </div>
-        <div class="staging-meta">
-          <p id="video-staging-filename" class="staging-filename"></p>
-          <p id="video-staging-dims" class="staging-dims"></p>
-        </div>
-        <div class="staging-actions">
-          <button id="btn-video-auto-detect" type="button" class="btn btn-primary">
-            <iconify-icon icon="ph:sparkle-bold" width="18"></iconify-icon>
-            <span>Try Auto Detect</span>
-          </button>
-          <button id="btn-video-change-file" type="button" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:arrows-clockwise" width="16"></iconify-icon>
-            <span>Change Video</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Video Tuner & Live Preview Container -->
-      <div id="video-tuner-container" class="tuner-container hidden">
-        <div id="video-detect-badge" class="detect-badge hidden"></div>
-        <div class="tuner-preview-row">
-          <div class="tuner-canvas-box main-box">
-            <span class="canvas-title">
-              <iconify-icon icon="ph:frame-corners" width="14"></iconify-icon>
-              Preview (Full Frame)
-            </span>
-            <div class="canvas-wrapper">
-              <canvas id="video-main-canvas"></canvas>
-            </div>
-          </div>
-          <div class="tuner-canvas-box zoom-box">
-            <div class="zoom-card">
-              <span class="canvas-title text-blue-600">
-                <iconify-icon icon="ph:magnifying-glass-plus" width="14"></iconify-icon>
-                Zoomed Original
-              </span>
-              <div class="canvas-wrapper">
-                <canvas id="video-zoom-canvas" width="200" height="200"></canvas>
+          <div id="batch-status-card" class="batch-workspace hidden">
+            <div class="batch-summary-bar">
+              <div class="summary-counts">
+                <span id="batch-summary-total" class="text-1 font-medium num">0 files</span>
+                <span class="chip chip-success" id="batch-stat-completed">0 cleaned</span>
+                <span class="chip chip-neutral" id="batch-stat-processing">0 pending</span>
+                <span class="chip chip-danger" id="batch-stat-failed">0 failed</span>
+              </div>
+              <div class="batch-progress-hairline">
+                <div id="batch-progress-bar" class="batch-progress-fill" style="width: 0%;"></div>
+              </div>
+              <div class="summary-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-clean-another">Clear queue</button>
+                <a id="btn-batch-download" href="#" class="btn btn-primary btn-sm hidden">Download ZIP</a>
               </div>
             </div>
-            <div class="zoom-card">
-              <span class="canvas-title text-green-600">
-                <iconify-icon icon="ph:check-circle" width="14"></iconify-icon>
-                Zoomed Cleaned
-              </span>
-              <div class="canvas-wrapper">
-                <canvas id="video-zoom-cleaned-canvas" width="200" height="200"></canvas>
+            <div class="queue-table-container">
+              <table class="queue-table">
+                <thead>
+                  <tr>
+                    <th style="width: 64px;">Media</th>
+                    <th>Name</th>
+                    <th style="width: 90px;">Type</th>
+                    <th style="width: 100px;">Size</th>
+                    <th style="width: 130px;">Status</th>
+                    <th style="width: 90px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="batch-files-list"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- INSPECTOR (Right 320px) -->
+      <aside class="inspector" id="inspector" aria-label="Inspector and Tuner">
+        <!-- Image Inspector -->
+        <div id="inspector-image" class="inspector-section">
+          <div class="inspector-field">
+            <div class="field-head">
+              <span class="text-xs text-3">Source</span>
+              <span class="chip chip-neutral num text-xs" id="img-staging-dims">-- × -- px</span>
+            </div>
+            <p class="text-xs text-1" id="img-staging-filename" style="word-break: break-all;">No image loaded</p>
+          </div>
+
+          <div class="inspector-field">
+            <div class="field-head">
+              <span class="text-xs text-3">Preset</span>
+              <button type="button" class="text-btn text-xs" id="btn-toggle-presets">Change</button>
+            </div>
+            <div class="preset-name text-xs text-1" id="img-selected-preset-name">Auto-Detecting...</div>
+            <div class="preset-list hidden" id="img-preset-list">
+              <div class="preset-item active" data-preset="new" id="btn-preset-img-nano">
+                <span class="preset-title">Gemini Adaptive Inset</span>
+                <span class="preset-detail num">Auto</span>
+              </div>
+              <div class="preset-item" data-preset="classic" id="btn-preset-img-classic">
+                <span class="preset-title">Classic Corner</span>
+                <span class="preset-detail num">Fixed</span>
+              </div>
+              <div class="preset-item" data-preset="veo" id="btn-preset-img-veo">
+                <span class="preset-title">Veo Video Inset</span>
+                <span class="preset-detail num">Video</span>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Quick Select Video Model Presets -->
-        <div class="tuner-preset-row">
-          <span class="tuner-preset-label">Model Preset:</span>
-          <div class="tuner-preset-buttons">
-            <button type="button" class="btn-preset active" data-preset="veo" id="btn-preset-vid-omni">
-              <iconify-icon icon="ph:video-camera-bold"></iconify-icon> Gemini Omni &amp; Flow (Adaptive)
-            </button>
-            <button type="button" class="btn-preset" data-preset="corner" id="btn-preset-vid-veo">
-              <iconify-icon icon="ph:corners-out"></iconify-icon> Veo (Corner)
-            </button>
-            <button type="button" class="btn-preset" data-preset="sparkle" id="btn-preset-vid-sparkle">
-              <iconify-icon icon="ph:sparkle-bold"></iconify-icon> Standard Sparkle
-            </button>
-          </div>
-        </div>
-
-        <div class="tuner-sliders mt-2">
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Strength (Gain)</span>
-              <span id="lbl-video-gain">0.60x</span>
+          <div class="inspector-field">
+            <div class="field-head">
+              <span class="text-xs text-3">Strength (Gain)</span>
+              <span class="num text-xs text-1" id="lbl-img-gain">0.60x</span>
             </div>
-            <input type="range" id="slider-video-gain" min="0.1" max="3" step="0.05" value="0.6" />
+            <input type="range" class="slider" id="slider-img-gain" min="0.1" max="3" step="0.05" value="0.6" />
           </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Size Scale</span>
-              <span id="lbl-video-scale">1.00x</span>
+
+          <div class="inspector-field">
+            <div class="field-head">
+              <span class="text-xs text-3">Size Scale</span>
+              <span class="num text-xs text-1" id="lbl-img-scale">1.00x</span>
             </div>
-            <input type="range" id="slider-video-scale" min="0.5" max="2" step="0.05" value="1.0" />
+            <input type="range" class="slider" id="slider-img-scale" min="0.5" max="2" step="0.05" value="1.0" />
           </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Position X</span>
-              <span id="lbl-video-offset-x">-24px</span>
+
+          <div class="inspector-field">
+            <div class="stepper-row">
+              <div>
+                <div class="field-head"><span class="text-xs text-3">Offset X</span><span class="num text-xs text-1" id="lbl-img-offset-x">-128px</span></div>
+                <input type="range" class="slider" id="slider-img-offset-x" min="-250" max="150" step="1" value="-128" />
+              </div>
+              <div>
+                <div class="field-head"><span class="text-xs text-3">Offset Y</span><span class="num text-xs text-1" id="lbl-img-offset-y">-128px</span></div>
+                <input type="range" class="slider" id="slider-img-offset-y" min="-250" max="150" step="1" value="-128" />
+              </div>
             </div>
-            <input type="range" id="slider-video-offset-x" min="-150" max="150" step="1" value="-24" />
           </div>
-          <div class="slider-group">
-            <div class="tuner-slider-label">
-              <span>Position Y</span>
-              <span id="lbl-video-offset-y">-24px</span>
-            </div>
-            <input type="range" id="slider-video-offset-y" min="-150" max="150" step="1" value="-24" />
-          </div>
-        </div>
 
-        <div class="tuner-actions">
-          <button id="btn-video-change-file-tuner" class="btn btn-secondary text-xs" type="button">
-            <iconify-icon icon="ph:arrows-clockwise"></iconify-icon> Change Video
-          </button>
-          <button id="btn-video-reset-sliders" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:arrow-counter-clockwise"></iconify-icon> Reset Sliders
-          </button>
-          <button id="btn-video-export" class="btn btn-primary">
-            <iconify-icon icon="ph:eraser"></iconify-icon> Remove &amp; Export Video MP4
-          </button>
-        </div>
-      </div>
-
-      <!-- Processing Progress -->
-      <div id="video-status" class="hidden mt-4 text-center">
-        <p class="mb-2">Cleaning &amp; Encoding Video...</p>
-        <div class="progress-bar-container">
-          <div id="video-progress-bar" class="progress-bar-fill"></div>
-        </div>
-        <p id="video-progress-text" class="progress-text">0%</p>
-      </div>
-
-      <div id="video-results" class="hidden mt-4"></div>
-    </section>
-
-    <!-- Batch Folder / ZIP Processing Panel -->
-    <section id="panel-batch" class="card hidden">
-      <div id="batch-dropzone" class="dropzone">
-        <div class="dropzone-icon">
-          <iconify-icon icon="ph:folder-notch-open-bold"></iconify-icon>
-        </div>
-        <p class="dropzone-title">Upload a Folder or ZIP archive of Gemini Images / Videos</p>
-        <p class="dropzone-sub">Drag &amp; drop a folder or .zip (supports recursive folders up to 500MB)</p>
-        <input id="batch-folder-input" type="file" webkitdirectory directory multiple class="hidden" />
-        <input id="batch-file-input" type="file" accept=".zip,image/*,video/*" multiple class="hidden" />
-        <div style="display: flex; gap: 0.5rem; justify-content: center; margin-top: 1rem;">
-          <button type="button" id="btn-select-batch-folder" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:folder-bold" width="16"></iconify-icon>
-            Select Folder
-          </button>
-          <button type="button" id="btn-select-batch-zip" class="btn btn-secondary text-xs">
-            <iconify-icon icon="ph:file-zip-bold" width="16"></iconify-icon>
-            Select Files / ZIP Archive
-          </button>
-        </div>
-      </div>
-
-      <!-- Batch Presets & Options -->
-      <div id="batch-options-card" class="mt-4" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem;">
-        <div class="tuner-preset-row">
-          <span class="tuner-preset-label">Detection Mode:</span>
-          <div class="tuner-preset-buttons">
-            <button type="button" class="btn-preset active" data-batch-preset="auto" id="btn-preset-batch-auto">
-              Auto Detect (Best Match)
-            </button>
-            <button type="button" class="btn-preset" data-batch-preset="classic" id="btn-preset-batch-classic">
-              Classic Corner (Standard)
-            </button>
-            <button type="button" class="btn-preset" data-batch-preset="veo3" id="btn-preset-batch-veo">
-              Veo 3 Video
-            </button>
-          </div>
-        </div>
-        <p style="font-size: 0.75rem; color: #64748b; margin-top: 0.5rem;">
-          Auto Detect scans every image for corner or inset watermarks with zero quality loss mathematical alpha unblending.
-        </p>
-      </div>
-
-      <!-- Batch Processing Status & Live Progress -->
-      <div id="batch-status-card" class="card mt-4 hidden">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-          <h3 id="batch-status-heading" style="font-size: 1rem; font-weight: 700; color: #1e293b; margin: 0;">Processing Batch...</h3>
-          <span id="batch-progress-pct" style="font-size: 1.1rem; font-weight: 700; color: #4338ca;">0%</span>
-        </div>
-
-        <!-- Progress Bar -->
-        <div style="background: #e2e8f0; border-radius: 9999px; height: 10px; width: 100%; overflow: hidden; margin-bottom: 1rem;">
-          <div id="batch-progress-bar" style="background: linear-gradient(90deg, #4f46e5, #7c3aed); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
-        </div>
-
-        <!-- Stats Counter -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; text-align: center; margin-bottom: 1.25rem;">
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem 0.25rem;">
-            <div style="font-size: 0.65rem; color: #64748b; text-transform: uppercase;">Total</div>
-            <div id="batch-stat-total" style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">0</div>
-          </div>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem 0.25rem;">
-            <div style="font-size: 0.65rem; color: #16a34a; text-transform: uppercase;">Completed</div>
-            <div id="batch-stat-completed" style="font-size: 1.1rem; font-weight: 700; color: #16a34a;">0</div>
-          </div>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem 0.25rem;">
-            <div style="font-size: 0.65rem; color: #2563eb; text-transform: uppercase;">Processing</div>
-            <div id="batch-stat-processing" style="font-size: 1.1rem; font-weight: 700; color: #2563eb;">0</div>
-          </div>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem 0.25rem;">
-            <div style="font-size: 0.65rem; color: #dc2626; text-transform: uppercase;">Failed</div>
-            <div id="batch-stat-failed" style="font-size: 1.1rem; font-weight: 700; color: #dc2626;">0</div>
-          </div>
-        </div>
-
-        <!-- Download & Reset Action Buttons -->
-        <div style="display: flex; gap: 0.75rem; justify-content: center; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap;">
-          <a id="btn-batch-download" href="#" class="btn btn-primary hidden" style="padding: 0.65rem 1.5rem; font-size: 0.95rem; display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none;">
-            <iconify-icon icon="ph:download-simple-bold" width="18"></iconify-icon>
-            <span>Download Cleaned Folder (ZIP)</span>
-          </a>
-          <button type="button" id="btn-batch-clean-another" class="btn btn-secondary text-xs hidden" style="padding: 0.65rem 1rem;">
-            <iconify-icon icon="ph:arrows-clockwise" width="16"></iconify-icon>
-            <span>Clean Another Batch</span>
-          </button>
-        </div>
-
-        <!-- Per-File Status & Preview List -->
-        <div>
-          <h4 style="font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: 0.05em;">Files Status</h4>
-          <div id="batch-files-list" style="max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 4px;"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Individual File Preview Modal (Before / After Comparison) -->
-    <div id="batch-preview-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 1.5rem;">
-      <div style="background: #ffffff; border-radius: 16px; width: 100%; max-width: 950px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);">
-        <!-- Modal Header -->
-        <div style="padding: 1rem 1.5rem; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; background: #f8fafc;">
-          <div style="overflow: hidden; max-width: 50%;">
-            <h3 id="modal-filename" style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">File Preview</h3>
-            <p id="modal-subtitle" style="margin: 0.15rem 0 0; font-size: 0.75rem; color: #64748b;">Zero Quality Loss Mathematical Preview</p>
-          </div>
-          <!-- Toggle Before / After View -->
-          <div style="display: flex; gap: 0.75rem; align-items: center;">
-            <div id="modal-compare-tabs" style="display: flex; background: #e2e8f0; padding: 3px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">
-              <button type="button" id="btn-modal-show-clean" class="btn-preset active" style="padding: 5px 12px; font-size: 0.75rem;">Cleaned (Watermark Removed)</button>
-              <button type="button" id="btn-modal-show-orig" class="btn-preset" style="padding: 5px 12px; font-size: 0.75rem;">Original (Before)</button>
-            </div>
-            <button type="button" id="btn-modal-close" style="background: none; border: none; font-size: 1.75rem; cursor: pointer; color: #64748b; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 6px;" title="Close">&times;</button>
-          </div>
-        </div>
-
-        <!-- Modal Body Preview -->
-        <div style="flex: 1; overflow: auto; padding: 1.5rem; display: flex; align-items: center; justify-content: center; background: #0f172a; min-height: 380px;">
-          <img id="modal-img-preview" src="" alt="Preview" style="max-width: 100%; max-height: 65vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);" />
-          <video id="modal-vid-preview" controls class="hidden" style="max-width: 100%; max-height: 65vh; border-radius: 8px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);"></video>
-        </div>
-
-        <!-- Modal Footer -->
-        <div style="padding: 0.9rem 1.5rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; background: #f8fafc;">
-          <span id="modal-status-pill" style="font-size: 0.75rem; font-weight: 600; color: #16a34a; background: #dcfce7; padding: 4px 10px; border-radius: 6px;">✓ Cleaned &amp; Verified</span>
-          <div style="display: flex; gap: 0.75rem;">
-            <button type="button" id="btn-modal-close-footer" class="btn btn-secondary text-xs">Close</button>
-            <a id="btn-modal-download" href="#" download class="btn btn-primary" style="padding: 0.5rem 1.15rem; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem;">
+          <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-img-reset-sliders" style="width: 100%;">Reset Sliders</button>
+            <button type="button" class="btn btn-primary btn-lg" id="btn-img-export" style="width: 100%;">
               <iconify-icon icon="ph:download-simple-bold" width="16"></iconify-icon>
-              <span>Download Cleaned File</span>
-            </a>
+              <span>Download Image</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Video Inspector -->
+        <div id="inspector-video" class="inspector-section hidden">
+          <div class="inspector-field">
+            <div class="field-head">
+              <span class="text-xs text-3">Video Clip</span>
+              <span class="chip chip-neutral num text-xs" id="video-staging-dims">-- × -- px</span>
+            </div>
+            <p class="text-xs text-1" id="video-staging-filename" style="word-break: break-all;">No video loaded</p>
+          </div>
+
+          <div class="inspector-field">
+            <div class="field-head"><span class="text-xs text-3">Watermark Lock</span></div>
+            <div class="lock-steps">
+              <div class="lock-step active" id="video-step-1">
+                <div class="step-num">1</div>
+                <div class="step-content">
+                  <div class="step-title">Frame Variance Scan</div>
+                  <div class="step-desc num" id="video-step-1-desc">Scans high-contrast frame</div>
+                </div>
+              </div>
+              <div class="lock-step" id="video-step-2">
+                <div class="step-num">2</div>
+                <div class="step-content">
+                  <div class="step-title">Preset Locked</div>
+                  <div class="step-desc num" id="video-step-2-desc">Veo Video Inset</div>
+                </div>
+              </div>
+              <div class="lock-step" id="video-step-3">
+                <div class="step-num">3</div>
+                <div class="step-content">
+                  <div class="step-title">Alpha Unblend Loop</div>
+                  <div class="step-desc num" id="video-step-3-desc">Audio AAC preserved</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="inspector-field">
+            <div class="field-head"><span class="text-xs text-3">Strength (Gain)</span><span class="num text-xs text-1" id="lbl-video-gain">0.60x</span></div>
+            <input type="range" class="slider" id="slider-video-gain" min="0.1" max="3" step="0.05" value="0.6" />
+          </div>
+
+          <div class="inspector-field">
+            <div class="field-head"><span class="text-xs text-3">Size Scale</span><span class="num text-xs text-1" id="lbl-video-scale">1.00x</span></div>
+            <input type="range" class="slider" id="slider-video-scale" min="0.5" max="2" step="0.05" value="1.0" />
+          </div>
+
+          <div class="inspector-field">
+            <div class="stepper-row">
+              <div>
+                <div class="field-head"><span class="text-xs text-3">Offset X</span><span class="num text-xs text-1" id="lbl-video-offset-x">-24px</span></div>
+                <input type="range" class="slider" id="slider-video-offset-x" min="-150" max="150" step="1" value="-24" />
+              </div>
+              <div>
+                <div class="field-head"><span class="text-xs text-3">Offset Y</span><span class="num text-xs text-1" id="lbl-video-offset-y">-24px</span></div>
+                <input type="range" class="slider" id="slider-video-offset-y" min="-150" max="150" step="1" value="-24" />
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-video-reset-sliders" style="width: 100%;">Reset Sliders</button>
+            <button type="button" class="btn btn-primary btn-lg" id="btn-video-export" style="width: 100%;">
+              <iconify-icon icon="ph:play-bold" width="16"></iconify-icon>
+              <span>Process Video</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Batch Inspector -->
+        <div id="inspector-batch" class="inspector-section hidden">
+          <div class="inspector-field">
+            <div class="field-head"><span class="text-xs text-3">Batch Mode</span></div>
+            <div class="preset-list">
+              <div class="preset-item active" data-batch-preset="auto" id="btn-preset-batch-auto">
+                <span class="preset-title">Auto Detect (Best Match)</span>
+                <span class="preset-detail">All Corners</span>
+              </div>
+              <div class="preset-item" data-batch-preset="classic" id="btn-preset-batch-classic">
+                <span class="preset-title">Classic Corner</span>
+                <span class="preset-detail">Fixed</span>
+              </div>
+              <div class="preset-item" data-batch-preset="veo3" id="btn-preset-batch-veo">
+                <span class="preset-title">Veo 3 Video</span>
+                <span class="preset-detail">Video</span>
+              </div>
+            </div>
+          </div>
+          <div class="inspector-field">
+            <div class="field-head"><span class="text-xs text-3">Engine</span></div>
+            <p class="text-xs text-2">WebCodecs & HTML5 Canvas client-side with optional local FastAPI offloading.</p>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Overlays -->
+    <div class="drawer-backdrop hidden" id="settings-backdrop"></div>
+    <aside class="drawer hidden" id="settings-drawer" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="drawer-header">
+        <h3 class="text-md text-1 font-semibold">Settings</h3>
+        <button type="button" class="icon-btn" id="btn-close-settings" aria-label="Close settings"><iconify-icon icon="ph:x-bold" width="16"></iconify-icon></button>
+      </div>
+      <div class="drawer-body">
+        <div class="drawer-section">
+          <h4 class="text-xs text-3 font-semibold mb-2" style="text-transform: uppercase; letter-spacing: 0.05em;">Output</h4>
+          <div class="inspector-field">
+            <label class="text-xs text-2 mb-1" for="setting-output-format">Export Format</label>
+            <select id="setting-output-format" class="stepper" style="width: 100%;">
+              <option value="auto">Keep original (lossless)</option>
+              <option value="png">PNG (lossless)</option>
+              <option value="webp">WebP (high fidelity)</option>
+            </select>
+          </div>
+        </div>
+        <div class="drawer-section">
+          <h4 class="text-xs text-3 font-semibold mb-2" style="text-transform: uppercase; letter-spacing: 0.05em;">Engine</h4>
+          <div class="inspector-field">
+            <label class="text-xs text-2 mb-1" for="setting-engine-url">Local Server URL</label>
+            <input type="text" id="setting-engine-url" class="stepper num" value="http://127.0.0.1:8000" style="width: 100%;" />
+            <p class="text-xs text-3 mt-1">Leave default if running python run.py locally.</p>
+          </div>
+        </div>
+        <div class="drawer-section">
+          <h4 class="text-xs text-3 font-semibold mb-2" style="text-transform: uppercase; letter-spacing: 0.05em;">Keyboard Shortcuts</h4>
+          <div style="font-size: 0.75rem; color: var(--text-2); display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">1 / 2 / 3</kbd><span>Switch Mode</span></div>
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Space</kbd><span>Play / Pause</span></div>
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">, / .</kbd><span>Frame Step</span></div>
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">\</kbd><span>Hold Original</span></div>
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Z</kbd><span>4x Loupe</span></div>
+            <div style="display: flex; justify-content: space-between;"><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Ctrl+S</kbd><span>Download</span></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="popover hidden" id="engine-popover" role="dialog" aria-label="Engine Status" style="position: fixed; top: 60px; right: 80px; width: 280px; z-index: var(--z-popover);">
+      <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-1); margin-bottom: 8px;">Execution Engine</div>
+      <p style="font-size: 0.75rem; color: var(--text-2); margin-bottom: 12px;" id="engine-popover-desc">Running in-browser with HTML5 Canvas and WebCodecs (100% private, no uploads).</p>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 0.75rem;">
+        <span class="dot" style="background: var(--success);" id="engine-ping-dot"></span>
+        <span class="num text-2" id="engine-ping-status">Checking local server...</span>
+      </div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="shortcuts-modal">
+      <div class="modal-card" style="max-width: 480px;">
+        <div class="modal-header">
+          <h3 class="text-sm font-semibold text-1">Keyboard Shortcuts</h3>
+          <button type="button" class="icon-btn" id="btn-close-shortcuts"><iconify-icon icon="ph:x-bold" width="16"></iconify-icon></button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.8rem;">
+          <div style="display: flex; justify-content: space-between;"><span>Switch Image / Video / Batch</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">1 / 2 / 3</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Play / Pause Video</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Space</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Step Back / Forward 1 Frame</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">, / .</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Hold to View Original</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">\</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Toggle 4x Loupe</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Z</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Toggle Split View</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">C</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Reset Tuner Sliders</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">R</kbd></div>
+          <div style="display: flex; justify-content: space-between;"><span>Download Cleaned Media</span><kbd style="background: var(--bg-3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-num);">Ctrl+S</kbd></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop hidden" id="batch-preview-modal">
+      <div class="modal-card" style="max-width: 900px; width: 90vw;">
+        <div class="modal-header">
+          <div>
+            <h3 id="modal-filename" class="text-sm font-semibold text-1" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 450px;">File Preview</h3>
+            <p class="text-xs text-3">Zero Quality Loss Mathematical Verification</p>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="segmented" style="height: 32px;" id="modal-compare-tabs">
+              <button type="button" class="segmented-pill active" id="btn-modal-show-clean" style="height: 26px; font-size: 0.75rem;">Cleaned</button>
+              <button type="button" class="segmented-pill" id="btn-modal-show-orig" style="height: 26px; font-size: 0.75rem;">Original</button>
+            </div>
+            <button type="button" class="icon-btn" id="btn-modal-close"><iconify-icon icon="ph:x-bold" width="16"></iconify-icon></button>
+          </div>
+        </div>
+        <div class="modal-body" style="display: flex; align-items: center; justify-content: center; min-height: 400px; background: var(--bg-0);">
+          <img id="modal-img-preview" src="" alt="Preview" style="max-width: 100%; max-height: 60vh; object-fit: contain; border-radius: var(--r-sm);" />
+          <video id="modal-vid-preview" controls class="hidden" style="max-width: 100%; max-height: 60vh; border-radius: var(--r-sm);"></video>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="chip chip-success">✓ Cleaned &amp; Verified</span>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-modal-close-footer">Close</button>
+            <a id="btn-modal-download" href="#" class="btn btn-primary btn-sm" download>Download Cleaned File</a>
           </div>
         </div>
       </div>
     </div>
 
+    <div class="toast-shelf" id="toast-shelf" aria-live="polite"></div>
+  </div>
 
-    <!-- How It Works Step-by-Step Section -->
-    <section id="how-it-works" class="how-it-works-section">
+  <!-- Documentation, SEO & Knowledge Base Container -->
+  <div class="doc-container">
+
+<section id="how-it-works" class="how-it-works-section">
       <h2 class="section-title">How to Remove Gemini Watermark</h2>
       <p class="guide-subtitle" style="margin-bottom: 2rem;">
         Whether you want to <strong>remove Gemini watermark from video</strong> or clean Google Gemini AI photos, follow
@@ -1549,7 +1424,9 @@
         </p>
       </div>
     </footer>
-  </main>
+  
+  </div>
+</main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="./main.js"></script>

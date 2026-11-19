@@ -486,9 +486,8 @@ class VideoWatermarkEngine {
 }
 
 // ── 4. App Controller & Event Handlers ──
-let currentTab = 'image';
-let watermarkEngine = null;
-let videoEngine = null;
+// Global instances reused from lines 489-491
+currentTab = 'image';
 
 const IMG_PRESETS = {
   new: { gain: 0.6, offsetX: -128, offsetY: -128, sizeScale: 1 },
@@ -1120,6 +1119,35 @@ function detectVideoWatermarkCandidate(imageData, width, height, bgImg) {
   };
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════
+// UNMARK — Minimalist Darkroom UI Controller
+// Specification Version 1.0 (Dark Theme Only, Zero Inpainting/Blur)
+// ═════════════════════════════════════════════════════════════════════════
+
+// Global instances reused from lines 489-491
+currentTab = 'image';
+
+// ── Toast Notifications ──
+function showToast(message, type = 'info', duration = 3000) {
+  const shelf = document.getElementById('toast-shelf');
+  if (!shelf) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type === 'success' ? 'chip-success' : type === 'danger' ? 'chip-danger' : ''}`;
+  let icon = 'ph:info-bold';
+  if (type === 'success') icon = 'ph:check-circle-bold';
+  if (type === 'danger') icon = 'ph:warning-circle-bold';
+  toast.innerHTML = `<iconify-icon icon="${icon}" width="16"></iconify-icon><span>${message}</span>`;
+  shelf.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(10px)';
+    toast.style.transition = 'all 240ms ease';
+    setTimeout(() => toast.remove(), 250);
+  }, duration);
+}
+
+// ── Smooth Scroll Helper ──
 function smoothScrollTo(element, offset = 75) {
   if (!element) return;
   setTimeout(() => {
@@ -1133,11 +1161,15 @@ function smoothScrollTo(element, offset = 75) {
   }, 100);
 }
 
+// ── Initialize App ──
 function init() {
   initTabs();
+  initOverlays();
   initImageRemover();
   initVideoRemover();
   initBatch();
+  initShortcuts();
+  checkEngineHealth();
 }
 
 if (document.readyState === 'loading') {
@@ -1146,6 +1178,7 @@ if (document.readyState === 'loading') {
   init();
 }
 
+// ── 1. Tab / Mode Controller ──
 function initTabs() {
   const tabImage = document.getElementById('tab-image');
   const tabVideo = document.getElementById('tab-video');
@@ -1153,24 +1186,34 @@ function initTabs() {
   const panelImage = document.getElementById('panel-image');
   const panelVideo = document.getElementById('panel-video');
   const panelBatch = document.getElementById('panel-batch');
-
-  if (!tabImage || !tabVideo || !panelImage || !panelVideo) return;
+  const inspectorImage = document.getElementById('inspector-image');
+  const inspectorVideo = document.getElementById('inspector-video');
+  const inspectorBatch = document.getElementById('inspector-batch');
 
   function switchTab(target, updateHash = false) {
     currentTab = target;
     try { sessionStorage.setItem('activeTab', target); } catch (e) { }
 
-    tabImage.classList.toggle('active', target === 'image');
-    tabVideo.classList.toggle('active', target === 'video');
+    if (tabImage) tabImage.classList.toggle('active', target === 'image');
+    if (tabVideo) tabVideo.classList.toggle('active', target === 'video');
     if (tabBatch) tabBatch.classList.toggle('active', target === 'batch');
 
-    panelImage.style.display = target === 'image' ? 'block' : 'none';
-    panelVideo.style.display = target === 'video' ? 'block' : 'none';
-    if (panelBatch) panelBatch.style.display = target === 'batch' ? 'block' : 'none';
+    if (panelImage) {
+      panelImage.style.display = target === 'image' ? 'block' : 'none';
+      panelImage.classList.toggle('hidden', target !== 'image');
+    }
+    if (panelVideo) {
+      panelVideo.style.display = target === 'video' ? 'block' : 'none';
+      panelVideo.classList.toggle('hidden', target !== 'video');
+    }
+    if (panelBatch) {
+      panelBatch.style.display = target === 'batch' ? 'block' : 'none';
+      panelBatch.classList.toggle('hidden', target !== 'batch');
+    }
 
-    panelImage.classList.toggle('hidden', target !== 'image');
-    panelVideo.classList.toggle('hidden', target !== 'video');
-    if (panelBatch) panelBatch.classList.toggle('hidden', target !== 'batch');
+    if (inspectorImage) inspectorImage.classList.toggle('hidden', target !== 'image');
+    if (inspectorVideo) inspectorVideo.classList.toggle('hidden', target !== 'video');
+    if (inspectorBatch) inspectorBatch.classList.toggle('hidden', target !== 'batch');
 
     if (updateHash) {
       try {
@@ -1180,82 +1223,144 @@ function initTabs() {
     }
   }
 
-  tabImage.onclick = (e) => {
-    e.preventDefault();
-    switchTab('image', true);
-  };
+  window.switchTab = switchTab;
 
-  tabVideo.onclick = (e) => {
-    e.preventDefault();
-    switchTab('video', true);
-  };
+  if (tabImage) tabImage.onclick = (e) => { e.preventDefault(); switchTab('image', true); };
+  if (tabVideo) tabVideo.onclick = (e) => { e.preventDefault(); switchTab('video', true); };
+  if (tabBatch) tabBatch.onclick = (e) => { e.preventDefault(); switchTab('batch', true); };
 
-  if (tabBatch) {
-    tabBatch.onclick = (e) => {
-      e.preventDefault();
-      switchTab('batch', true);
-    };
-  }
-
-  // Deep-link check for video intent (from search engines or internal links)
-  function checkUrlIntent() {
-    const hash = (window.location.hash || '').toLowerCase();
-    const urlParams = new URLSearchParams(window.location.search);
-    const param = (urlParams.get('tab') || urlParams.get('type') || '').toLowerCase();
-
-    if (hash === '#video' || hash === '#panel-video' || param === 'video') {
-      switchTab('video');
-      return true;
-    }
-    return false;
-  }
-
-  if (!checkUrlIntent()) {
+  // URL hash check
+  const hash = (window.location.hash || '').toLowerCase();
+  if (hash === '#video' || hash === '#panel-video') {
+    switchTab('video');
+  } else if (hash === '#batch' || hash === '#panel-batch') {
+    switchTab('batch');
+  } else {
     try {
-      const savedTab = sessionStorage.getItem('activeTab');
-      if (savedTab === 'video') {
-        switchTab('video');
-      } else if (savedTab === 'image') {
-        switchTab('image');
+      const saved = sessionStorage.getItem('activeTab');
+      if (saved && (saved === 'image' || saved === 'video' || saved === 'batch')) {
+        switchTab(saved);
       }
     } catch (e) { }
   }
 
   window.addEventListener('hashchange', () => {
-    checkUrlIntent();
+    const h = (window.location.hash || '').toLowerCase();
+    if (h === '#video' || h === '#panel-video') switchTab('video');
+    else if (h === '#batch' || h === '#panel-batch') switchTab('batch');
+    else if (h === '#image' || h === '#panel-image') switchTab('image');
   });
 
-  // Attach click listeners to any links pointing to video tab
   document.querySelectorAll('a[href="#panel-video"], a[href="#video"]').forEach(link => {
-    link.addEventListener('click', () => {
-      switchTab('video', true);
-    });
+    link.addEventListener('click', (e) => { e.preventDefault(); switchTab('video', true); });
   });
-
-  // Attach click listeners to any links pointing to image tab
   document.querySelectorAll('a[href="#panel-image"], a[href="#image"]').forEach(link => {
-    link.addEventListener('click', () => {
-      switchTab('image', true);
-    });
+    link.addEventListener('click', (e) => { e.preventDefault(); switchTab('image', true); });
   });
 }
 
+// ── 2. Overlays Controller (Settings, Engine, Shortcuts) ──
+function initOverlays() {
+  const btnSettings = document.getElementById('btn-open-settings');
+  const btnCloseSettings = document.getElementById('btn-close-settings');
+  const drawerSettings = document.getElementById('settings-drawer');
+  const backdropSettings = document.getElementById('settings-backdrop');
+
+  const btnShortcuts = document.getElementById('btn-open-shortcuts');
+  const btnCloseShortcuts = document.getElementById('btn-close-shortcuts');
+  const modalShortcuts = document.getElementById('shortcuts-modal');
+
+  const btnEngine = document.getElementById('btn-engine-status');
+  const popoverEngine = document.getElementById('engine-popover');
+
+  function openSettings() {
+    if (drawerSettings) drawerSettings.classList.remove('hidden');
+    if (backdropSettings) backdropSettings.classList.remove('hidden');
+  }
+  function closeSettings() {
+    if (drawerSettings) drawerSettings.classList.add('hidden');
+    if (backdropSettings) backdropSettings.classList.add('hidden');
+  }
+
+  function openShortcuts() {
+    if (modalShortcuts) modalShortcuts.classList.remove('hidden');
+  }
+  function closeShortcuts() {
+    if (modalShortcuts) modalShortcuts.classList.add('hidden');
+  }
+
+  btnSettings?.addEventListener('click', openSettings);
+  btnCloseSettings?.addEventListener('click', closeSettings);
+  backdropSettings?.addEventListener('click', closeSettings);
+
+  btnShortcuts?.addEventListener('click', openShortcuts);
+  btnCloseShortcuts?.addEventListener('click', closeShortcuts);
+  modalShortcuts?.addEventListener('click', (e) => {
+    if (e.target === modalShortcuts) closeShortcuts();
+  });
+
+  btnEngine?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (popoverEngine) popoverEngine.classList.toggle('hidden');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (popoverEngine && !popoverEngine.contains(e.target) && e.target !== btnEngine && !btnEngine?.contains(e.target)) {
+      popoverEngine.classList.add('hidden');
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeSettings();
+      closeShortcuts();
+      if (popoverEngine) popoverEngine.classList.add('hidden');
+      const batchModal = document.getElementById('batch-preview-modal');
+      if (batchModal) batchModal.classList.add('hidden');
+    }
+  });
+}
+
+// ── Check Engine Health (Local FastAPI Ping) ──
+async function checkEngineHealth() {
+  const dot = document.getElementById('engine-ping-dot');
+  const statusTxt = document.getElementById('engine-ping-status');
+  const topbarTxt = document.getElementById('engine-status-text');
+  const inputUrl = document.getElementById('setting-engine-url');
+  const url = (inputUrl && inputUrl.value) ? inputUrl.value.trim() : 'http://127.0.0.1:8000';
+
+  try {
+    const res = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(1500) });
+    if (res.ok) {
+      if (dot) dot.style.background = 'var(--success)';
+      if (statusTxt) statusTxt.textContent = 'Local FastAPI connected (port 8000)';
+      if (topbarTxt) topbarTxt.textContent = 'FastAPI + GPU';
+      return;
+    }
+  } catch (e) {
+    // Fallback to in-browser WebCodecs
+  }
+  if (dot) dot.style.background = 'var(--accent)';
+  if (statusTxt) statusTxt.textContent = 'In-browser WebCodecs (100% private, on-device)';
+  if (topbarTxt) topbarTxt.textContent = 'In browser';
+}
+
+// ── 3. Image Remover Controller ──
 function initImageRemover() {
   const dropzone = document.getElementById('img-dropzone');
   const fileInput = document.getElementById('img-input');
-  const resultsArea = document.getElementById('img-results');
-
-  const stagingCard = document.getElementById('img-staging-card');
-  const stagingPreview = document.getElementById('img-staging-preview');
-  const stagingFilename = document.getElementById('img-staging-filename');
-  const stagingDims = document.getElementById('img-staging-dims');
-  const btnAutoDetect = document.getElementById('btn-img-auto-detect');
-  const btnChangeFile = document.getElementById('btn-img-change-file');
-
-  const tunerContainer = document.getElementById('img-tuner-container');
+  const stageLoaded = document.getElementById('img-stage-loaded');
+  const compareBox = document.getElementById('img-compare');
   const mainCanvas = document.getElementById('img-main-canvas');
-  const zoomCanvas = document.getElementById('img-zoom-canvas');
-  const zoomCleanedCanvas = document.getElementById('img-zoom-cleaned-canvas');
+  const origImg = document.getElementById('img-staging-preview');
+  const compareLine = document.getElementById('img-compare-line');
+  const layerOrig = document.getElementById('img-layer-orig');
+
+  const metaFilename = document.getElementById('img-staging-filename');
+  const metaDims = document.getElementById('img-staging-dims');
+  const selectedPresetName = document.getElementById('img-selected-preset-name');
+  const btnTogglePresets = document.getElementById('btn-toggle-presets');
+  const presetList = document.getElementById('img-preset-list');
 
   const sliderGain = document.getElementById('slider-img-gain');
   const sliderScale = document.getElementById('slider-img-scale');
@@ -1269,40 +1374,28 @@ function initImageRemover() {
 
   const btnResetSliders = document.getElementById('btn-img-reset-sliders');
   const btnExport = document.getElementById('btn-img-export');
+  const btnReplace = document.getElementById('btn-img-change-file-tuner');
+
+  const btnToggleSplit = document.getElementById('btn-toggle-split');
+  const btnHoldOrig = document.getElementById('btn-hold-orig');
+  const btnToggleLoupe = document.getElementById('btn-toggle-loupe');
+  const loupeEl = document.getElementById('img-loupe');
+  const loupeCanvas = document.getElementById('img-zoom-cleaned-canvas');
+  const btnFitScreen = document.getElementById('btn-fit-screen');
 
   if (!dropzone || !fileInput) return;
 
   let currentFile = null;
   let currentPreviewFrame = null;
   let currentBase = null;
-  let currentOriginalBitmap = null;
   let currentDetected = null;
   let isProcessing = false;
+  let isSplitActive = true;
+  let isLoupeActive = false;
+  let splitPercent = 50;
+  let isDraggingSplit = false;
 
   const currentSettings = { gain: 0.6, offsetX: -128, offsetY: -128, sizeScale: 1 };
-
-  function setDropzoneLoading(loading, message = 'Processing image...') {
-    isProcessing = loading;
-    if (loading) {
-      dropzone.classList.add('loading');
-      dropzone.innerHTML = `
-        <div class="dropzone-loader">
-          <div class="dropzone-spinner"></div>
-          <p class="dropzone-title text-indigo-600">${message}</p>
-          <p class="dropzone-sub">Please wait, analyzing watermark...</p>
-        </div>
-      `;
-    } else {
-      dropzone.classList.remove('loading');
-      dropzone.innerHTML = `
-        <div class="dropzone-icon">
-          <iconify-icon icon="ph:upload-simple-bold"></iconify-icon>
-        </div>
-        <p class="dropzone-title">Upload or drag your Gemini Image</p>
-        <p class="dropzone-sub">Supports PNG, JPG, WebP</p>
-      `;
-    }
-  }
 
   function updateSliderLabels() {
     if (lblGain) lblGain.textContent = `${currentSettings.gain.toFixed(2)}x`;
@@ -1311,78 +1404,179 @@ function initImageRemover() {
     if (lblOffsetY) lblOffsetY.textContent = `${currentSettings.offsetY}px`;
   }
 
-  function updateDetectBadge() {
-    const badgeEl = document.getElementById('img-detect-badge');
-    if (!badgeEl) return;
-    if (currentDetected) {
-      if (currentDetected.matchFound) {
-        badgeEl.className = 'detect-badge';
-        badgeEl.innerHTML = `<iconify-icon icon="ph:scan" width="16" style="color: #6366f1;"></iconify-icon> <span>Auto-Detected: <strong>${currentDetected.name}</strong> (${Math.round(currentDetected.score * 100)}% match)</span>`;
-        badgeEl.classList.remove('hidden');
+  function setSplit(pct) {
+    splitPercent = Math.max(0, Math.min(100, pct));
+    if (compareBox) compareBox.dataset.split = splitPercent.toFixed(1);
+    if (compareLine) compareLine.style.left = `${splitPercent}%`;
+    if (layerOrig) {
+      if (!isSplitActive) {
+        layerOrig.style.clipPath = 'polygon(100% 0, 100% 0, 100% 100%, 100% 100%)';
       } else {
-        badgeEl.className = 'detect-badge warning';
-        badgeEl.innerHTML = `<iconify-icon icon="ph:info" width="16" style="color: #d97706;"></iconify-icon> <span>Standard Preset Applied (${currentDetected.name})</span>`;
-        badgeEl.classList.remove('hidden');
+        layerOrig.style.clipPath = `polygon(${splitPercent}% 0, 100% 0, 100% 100%, ${splitPercent}% 100%)`;
       }
-    } else {
-      badgeEl.classList.add('hidden');
     }
   }
 
-  function applyAutoSettings() {
-    const w = currentPreviewFrame ? currentPreviewFrame.width : 1536;
-    const h = currentPreviewFrame ? currentPreviewFrame.height : 1536;
-
-    let p;
-    if (currentDetected) {
-      p = {
-        gain: currentDetected.gain,
-        offsetX: currentDetected.offsetX,
-        offsetY: currentDetected.offsetY,
-        sizeScale: currentDetected.sizeScale
-      };
-    } else {
-      p = getAdaptiveImagePreset('new', w, h);
+  // Signature Reveal Animation: 420ms left-to-center sweep
+  function triggerRevealSweep() {
+    if (!compareBox) return;
+    compareBox.dataset.reveal = "play";
+    setSplit(0);
+    const start = performance.now();
+    const duration = 420;
+    function sweep(time) {
+      const elapsed = time - start;
+      const progress = Math.min(1, elapsed / duration);
+      // ease-reveal cubic-bezier(0.65, 0, 0.15, 1)
+      const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      setSplit(ease * 50);
+      if (progress < 1) {
+        requestAnimationFrame(sweep);
+      } else {
+        setSplit(50);
+        compareBox.removeAttribute('data-reveal');
+      }
     }
-    Object.assign(currentSettings, p);
-
-    if (sliderOffsetX) {
-      sliderOffsetX.min = -Math.round(w * 0.45);
-      sliderOffsetX.max = Math.round(w * 0.2);
-      sliderOffsetX.value = currentSettings.offsetX;
-    }
-    if (sliderOffsetY) {
-      sliderOffsetY.min = -Math.round(h * 0.45);
-      sliderOffsetY.max = Math.round(h * 0.2);
-      sliderOffsetY.value = currentSettings.offsetY;
-    }
-    if (sliderGain) sliderGain.value = currentSettings.gain;
-    if (sliderScale) sliderScale.value = currentSettings.sizeScale;
-
-    const activeKey = (currentDetected && currentDetected.presetKey) || 'new';
-    document.querySelectorAll('#panel-image .btn-preset').forEach(b => {
-      b.classList.toggle('active', b.dataset.preset === activeKey);
-    });
-
-    updateSliderLabels();
-    updateDetectBadge();
-    renderTuner();
+    requestAnimationFrame(sweep);
   }
 
-  const imgPresetButtons = document.querySelectorAll('#panel-image .btn-preset');
-  imgPresetButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      imgPresetButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const presetKey = btn.dataset.preset;
+  // Compare Slider Drag Handling
+  function onPointerDown(e) {
+    if (e.target.closest('.stage-toolbar') || e.target.closest('.loupe')) return;
+    isDraggingSplit = true;
+    updateSplitFromPointer(e);
+    compareBox.setPointerCapture?.(e.pointerId);
+  }
+
+  function onPointerMove(e) {
+    if (isDraggingSplit) {
+      updateSplitFromPointer(e);
+    }
+    if (isLoupeActive) {
+      updateLoupePosition(e);
+    }
+  }
+
+  function onPointerUp(e) {
+    isDraggingSplit = false;
+    try { compareBox.releasePointerCapture?.(e.pointerId); } catch (err) {}
+  }
+
+  function updateSplitFromPointer(e) {
+    if (!compareBox) return;
+    const rect = compareBox.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const x = clientX - rect.left;
+    const pct = (x / rect.width) * 100;
+    setSplit(pct);
+  }
+
+  compareBox?.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+
+  // Loupe Controller (4x magnification)
+  function updateLoupePosition(e) {
+    if (!loupeEl || !loupeCanvas || !mainCanvas || !compareBox) return;
+    const rect = compareBox.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      loupeEl.classList.add('hidden');
+      return;
+    }
+    loupeEl.classList.remove('hidden');
+    loupeEl.style.left = `${x}px`;
+    loupeEl.style.top = `${y}px`;
+
+    // Map to canvas pixel coordinates
+    const scaleX = mainCanvas.width / rect.width;
+    const scaleY = mainCanvas.height / rect.height;
+    const cx = x * scaleX;
+    const cy = y * scaleY;
+
+    const zctx = loupeCanvas.getContext('2d');
+    zctx.imageSmoothingEnabled = false;
+    zctx.clearRect(0, 0, loupeCanvas.width, loupeCanvas.height);
+
+    const zoomFactor = 4;
+    const srcSize = 200 / zoomFactor; // 50px source box
+    zctx.drawImage(
+      mainCanvas,
+      cx - srcSize / 2, cy - srcSize / 2, srcSize, srcSize,
+      0, 0, loupeCanvas.width, loupeCanvas.height
+    );
+  }
+
+  btnToggleLoupe?.addEventListener('click', () => {
+    isLoupeActive = !isLoupeActive;
+    btnToggleLoupe.classList.toggle('active', isLoupeActive);
+    if (!isLoupeActive && loupeEl) loupeEl.classList.add('hidden');
+  });
+
+  btnToggleSplit?.addEventListener('click', () => {
+    isSplitActive = !isSplitActive;
+    btnToggleSplit.classList.toggle('active', isSplitActive);
+    if (compareLine) compareLine.style.display = isSplitActive ? 'block' : 'none';
+    setSplit(splitPercent);
+  });
+
+  // Hold original button / key
+  let previousSplit = 50;
+  function startHoldOriginal() {
+    previousSplit = splitPercent;
+    setSplit(100);
+    if (layerOrig) layerOrig.style.clipPath = 'polygon(0 0, 100% 0, 100% 100%, 0 100%)';
+  }
+  function stopHoldOriginal() {
+    setSplit(previousSplit);
+  }
+
+  btnHoldOrig?.addEventListener('mousedown', startHoldOriginal);
+  btnHoldOrig?.addEventListener('mouseup', stopHoldOriginal);
+  btnHoldOrig?.addEventListener('mouseleave', stopHoldOriginal);
+  btnHoldOrig?.addEventListener('touchstart', (e) => { e.preventDefault(); startHoldOriginal(); });
+  btnHoldOrig?.addEventListener('touchend', (e) => { e.preventDefault(); stopHoldOriginal(); });
+
+  window.addEventListener('keydown', (e) => {
+    if (currentTab === 'image' && e.key === '\\' && !e.repeat) {
+      startHoldOriginal();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (currentTab === 'image' && e.key === '\\') {
+      stopHoldOriginal();
+    }
+  });
+
+  btnFitScreen?.addEventListener('click', () => {
+    setSplit(50);
+  });
+
+  // Presets Accordion
+  btnTogglePresets?.addEventListener('click', () => {
+    if (presetList) presetList.classList.toggle('hidden');
+  });
+
+  presetList?.querySelectorAll('.preset-item').forEach(item => {
+    item.addEventListener('click', () => {
+      presetList.querySelectorAll('.preset-item').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      const presetKey = item.dataset.preset;
       const w = currentPreviewFrame ? currentPreviewFrame.width : 1536;
       const h = currentPreviewFrame ? currentPreviewFrame.height : 1536;
       const p = getAdaptiveImagePreset(presetKey, w, h);
       Object.assign(currentSettings, p);
+
       if (sliderOffsetX) sliderOffsetX.value = currentSettings.offsetX;
       if (sliderOffsetY) sliderOffsetY.value = currentSettings.offsetY;
       if (sliderGain) sliderGain.value = currentSettings.gain;
       if (sliderScale) sliderScale.value = currentSettings.sizeScale;
+
+      if (selectedPresetName) selectedPresetName.textContent = item.querySelector('.preset-title')?.textContent || presetKey;
+      presetList.classList.add('hidden');
       updateSliderLabels();
       renderTuner();
     });
@@ -1404,31 +1598,61 @@ function initImageRemover() {
 
   btnResetSliders?.addEventListener('click', () => {
     applyAutoSettings();
+    showToast('Sliders reset to auto-detected watermark parameters');
   });
 
-  dropzone.onclick = () => {
-    if (!isProcessing) fileInput.click();
-  };
+  function applyAutoSettings() {
+    const w = currentPreviewFrame ? currentPreviewFrame.width : 1536;
+    const h = currentPreviewFrame ? currentPreviewFrame.height : 1536;
 
-  dropzone.ondragover = (e) => {
-    e.preventDefault();
-    if (!isProcessing) dropzone.classList.add('drag-over');
-  };
+    let p;
+    if (currentDetected) {
+      p = {
+        gain: currentDetected.gain,
+        offsetX: currentDetected.offsetX,
+        offsetY: currentDetected.offsetY,
+        sizeScale: currentDetected.sizeScale
+      };
+      if (selectedPresetName) {
+        selectedPresetName.textContent = `${currentDetected.name} (${Math.round(currentDetected.score * 100)}% match)`;
+      }
+    } else {
+      p = getAdaptiveImagePreset('new', w, h);
+      if (selectedPresetName) selectedPresetName.textContent = 'Gemini Adaptive Inset';
+    }
+    Object.assign(currentSettings, p);
 
-  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
+    if (sliderOffsetX) {
+      sliderOffsetX.min = -Math.round(w * 0.45);
+      sliderOffsetX.max = Math.round(w * 0.2);
+      sliderOffsetX.value = currentSettings.offsetX;
+    }
+    if (sliderOffsetY) {
+      sliderOffsetY.min = -Math.round(h * 0.45);
+      sliderOffsetY.max = Math.round(h * 0.2);
+      sliderOffsetY.value = currentSettings.offsetY;
+    }
+    if (sliderGain) sliderGain.value = currentSettings.gain;
+    if (sliderScale) sliderScale.value = currentSettings.sizeScale;
 
-  dropzone.ondrop = (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (isProcessing) return;
-    if (e.dataTransfer.files.length) handleImageFile(e.dataTransfer.files[0]);
-  };
+    updateSliderLabels();
+    renderTuner();
+  }
 
-  fileInput.onchange = (e) => {
-    if (isProcessing) return;
-    if (e.target.files.length) handleImageFile(e.target.files[0]);
-    fileInput.value = '';
-  };
+  function renderTuner() {
+    if (!currentPreviewFrame || !mainCanvas || !watermarkEngine) return;
+    const { width, height, imageData } = currentPreviewFrame;
+
+    mainCanvas.width = width;
+    mainCanvas.height = height;
+
+    const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
+    const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+    cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
+
+    const ctx = mainCanvas.getContext('2d');
+    ctx.putImageData(copy, 0, 0);
+  }
 
   async function grabImageFrame(file) {
     if (typeof createImageBitmap === 'function') {
@@ -1444,9 +1668,7 @@ function initImageRemover() {
         const imageData = cx.getImageData(0, 0, width, height);
         bmp.close();
         return { width, height, imageData };
-      } catch {
-        // Fallback to Image element
-      }
+      } catch (e) {}
     }
 
     return new Promise((resolve, reject) => {
@@ -1471,65 +1693,12 @@ function initImageRemover() {
     });
   }
 
-  function renderTuner() {
-    if (!currentPreviewFrame || !mainCanvas || !watermarkEngine) return;
-    const { width, height, imageData } = currentPreviewFrame;
-
-    const offscreen = document.createElement('canvas');
-    offscreen.width = width;
-    offscreen.height = height;
-
-    const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-    const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-    const { wm, roi } = cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
-    offscreen.getContext('2d').putImageData(copy, 0, 0);
-
-    const maxW = 360;
-    const scale = Math.min(1, maxW / width);
-    mainCanvas.width = Math.round(width * scale);
-    mainCanvas.height = Math.round(height * scale);
-    const mctx = mainCanvas.getContext('2d');
-    mctx.drawImage(offscreen, 0, 0, mainCanvas.width, mainCanvas.height);
-    mctx.strokeStyle = '#6366f1';
-    mctx.lineWidth = 2;
-    mctx.strokeRect(wm.x * scale, wm.y * scale, wm.width * scale, wm.height * scale);
-
-    if (zoomCanvas && currentOriginalBitmap) {
-      const zctx = zoomCanvas.getContext('2d');
-      zctx.imageSmoothingEnabled = false;
-      zctx.clearRect(0, 0, zoomCanvas.width, zoomCanvas.height);
-      zctx.drawImage(currentOriginalBitmap, roi.x, roi.y, roi.width, roi.height, 0, 0, zoomCanvas.width, zoomCanvas.height);
-      const sx = zoomCanvas.width / roi.width;
-      const sy = zoomCanvas.height / roi.height;
-      zctx.strokeStyle = '#2563eb';
-      zctx.lineWidth = 2;
-      zctx.strokeRect((wm.x - roi.x) * sx, (wm.y - roi.y) * sy, wm.width * sx, wm.height * sy);
-    }
-
-    if (zoomCleanedCanvas) {
-      const zctx = zoomCleanedCanvas.getContext('2d');
-      zctx.imageSmoothingEnabled = false;
-      zctx.clearRect(0, 0, zoomCleanedCanvas.width, zoomCleanedCanvas.height);
-
-      zctx.drawImage(offscreen, roi.x, roi.y, roi.width, roi.height, 0, 0, zoomCleanedCanvas.width, zoomCleanedCanvas.height);
-
-      const sx = zoomCleanedCanvas.width / roi.width;
-      const sy = zoomCleanedCanvas.height / roi.height;
-      zctx.strokeStyle = '#16a34a';
-      zctx.lineWidth = 2;
-      zctx.strokeRect((wm.x - roi.x) * sx, (wm.y - roi.y) * sy, wm.width * sx, wm.height * sy);
-    }
-  }
-
   async function handleImageFile(file) {
-    if (!file.type.startsWith('image/')) return;
-    if (isProcessing) return;
-
-    setDropzoneLoading(true, 'Loading image preview...');
+    if (!file.type.startsWith('image/')) {
+      showToast('Please select a valid image file (PNG, JPG, WebP)', 'danger');
+      return;
+    }
     currentFile = file;
-
-    resultsArea.classList.add('hidden');
-    tunerContainer.classList.add('hidden');
 
     try {
       if (!watermarkEngine) {
@@ -1538,164 +1707,85 @@ function initImageRemover() {
 
       currentPreviewFrame = await grabImageFrame(file);
 
-      // Populate staging card
-      if (stagingPreview) {
-        stagingPreview.src = URL.createObjectURL(file);
-      }
-      if (stagingFilename) {
-        stagingFilename.textContent = file.name;
-      }
-      if (stagingDims) {
-        stagingDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
-      }
+      // Metadata
+      if (metaFilename) metaFilename.textContent = file.name;
+      if (metaDims) metaDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
+      if (origImg) origImg.src = URL.createObjectURL(file);
 
-      // Hide dropzone and show staging card
-      dropzone.classList.add('hidden');
-      if (stagingCard) {
-        stagingCard.classList.remove('hidden');
-        smoothScrollTo(stagingCard);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error loading image: ' + (err.message || err));
-    } finally {
-      setDropzoneLoading(false);
-    }
-  }
-
-  // Handle "Try Auto Detect" button (triggers Direct Link & reveals tuner)
-  btnAutoDetect?.addEventListener('click', async () => {
-    if (!currentFile || !watermarkEngine || !currentPreviewFrame) return;
-
-    // Trigger Monetag Direct Link (formerly on Download button)
-    handleAutoDetectAd();
-
-    // Hide staging card
-    if (stagingCard) stagingCard.classList.add('hidden');
-
-    try {
+      // Auto detect
       currentBase = watermarkEngine.getWatermarkInfo(currentPreviewFrame.width, currentPreviewFrame.height);
-      if (currentOriginalBitmap) currentOriginalBitmap.close();
-      currentOriginalBitmap = await createImageBitmap(currentPreviewFrame.imageData);
-
-      // Run Auto-Detection
       const activeBg = (Math.min(currentPreviewFrame.width, currentPreviewFrame.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
       currentDetected = detectWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, activeBg);
 
-      tunerContainer.classList.remove('hidden');
+      // Hide dropzone, show loaded stage
+      dropzone.classList.add('hidden');
+      stageLoaded.classList.remove('hidden');
+
       applyAutoSettings();
-      smoothScrollTo(tunerContainer);
-    } catch (err) {
-      console.error('Error running auto detection:', err);
-    }
-  });
-
-  // Reset/Change Image Helper
-  function resetImageUploader() {
-    if (stagingCard) stagingCard.classList.add('hidden');
-    tunerContainer.classList.add('hidden');
-    resultsArea.classList.add('hidden');
-    dropzone.classList.remove('hidden');
-    fileInput.value = '';
-    currentFile = null;
-    currentPreviewFrame = null;
-    if (currentOriginalBitmap) {
-      currentOriginalBitmap.close();
-      currentOriginalBitmap = null;
-    }
-    smoothScrollTo(dropzone);
-  }
-
-  btnChangeFile?.addEventListener('click', resetImageUploader);
-  document.getElementById('btn-img-change-file-tuner')?.addEventListener('click', resetImageUploader);
-
-  btnExport?.addEventListener('click', async () => {
-    if (!currentFile || !watermarkEngine || !currentPreviewFrame) return;
-
-    handleExportAd();
-
-    // Preload Monetag Popunder for the Download button
-    loadMonetagPopunder();
-
-    tunerContainer.classList.add('hidden');
-    resultsArea.classList.add('hidden');
-
-    try {
-      const { width, height, imageData } = currentPreviewFrame;
-      const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-      const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-      cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d').putImageData(copy, 0, 0);
-
-      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-      const originalUrl = URL.createObjectURL(currentFile);
-      const url = URL.createObjectURL(blob);
-
-      resultsArea.classList.remove('hidden');
-      resultsArea.innerHTML = `
-        <div class="card">
-          <h3 class="font-bold text-center mb-4">Image Watermark Cleaned Successfully!</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <p class="text-xs mb-2">Original (${width}x${height}px)</p>
-              <div class="checker p-2 text-center">
-                <img src="${originalUrl}" alt="Original image with watermark (${width}x${height}px)" style="max-height: 250px; margin: 0 auto; object-fit: contain; width: 100%;" />
-              </div>
-            </div>
-            <div>
-              <p class="text-xs mb-2 text-green-600">Cleaned Result</p>
-              <div class="checker p-2 text-center">
-                <img src="${url}" alt="Cleaned result image without watermark" style="max-height: 250px; margin: 0 auto; object-fit: contain; width: 100%;" />
-              </div>
-            </div>
-          </div>
-          <div class="mt-4 text-center flex items-center justify-center gap-3">
-            <a href="${url}" download="clean_${currentFile.name}" class="btn btn-primary" id="btn-img-download">
-              <iconify-icon icon="ph:download-simple-bold" width="16"></iconify-icon>
-              Download Cleaned PNG
-            </a>
-            <button type="button" class="btn btn-secondary text-xs" id="btn-img-clean-another">
-              <iconify-icon icon="ph:arrows-clockwise" width="16"></iconify-icon>
-              Clean Another
-            </button>
-          </div>
-          ${getPromoCardHtml('image')}
-        </div>
-      `;
-
-      document.getElementById('btn-img-clean-another')?.addEventListener('click', resetImageUploader);
-
-      smoothScrollTo(resultsArea);
+      triggerRevealSweep();
+      showToast(`Watermark detected: ${currentDetected.name}`, 'success');
     } catch (err) {
       console.error(err);
-      alert('Error exporting image: ' + err.message);
+      showToast('Error loading image: ' + (err.message || err), 'danger');
+    }
+  }
+
+  dropzone.onclick = () => fileInput.click();
+  dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); };
+  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
+  dropzone.ondrop = (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleImageFile(e.dataTransfer.files[0]);
+  };
+  fileInput.onchange = (e) => {
+    if (e.target.files.length) handleImageFile(e.target.files[0]);
+    fileInput.value = '';
+  };
+
+  btnReplace?.addEventListener('click', () => fileInput.click());
+
+  // Export / Download Cleaned Image
+  btnExport?.addEventListener('click', async () => {
+    if (!currentFile || !currentPreviewFrame || !mainCanvas) return;
+    try {
+      handleExportAd();
+      loadMonetagPopunder();
+
+      const blob = await new Promise(r => mainCanvas.toBlob(r, 'image/png'));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `unmark_${currentFile.name.replace(/\.[^/.]+$/, '')}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast('Cleaned image downloaded successfully!', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Error exporting image: ' + err.message, 'danger');
     }
   });
 }
 
+// ── 4. Video Remover Controller ──
 function initVideoRemover() {
   const dropzone = document.getElementById('video-dropzone');
   const fileInput = document.getElementById('video-input');
-  const statusContainer = document.getElementById('video-status');
+  const stageLoaded = document.getElementById('video-stage-loaded');
+  const mainCanvas = document.getElementById('video-main-canvas');
+  const videoSrc = document.getElementById('video-src-element');
+  const statusOverlay = document.getElementById('video-status');
   const progressBar = document.getElementById('video-progress-bar');
   const progressText = document.getElementById('video-progress-text');
-  const resultsArea = document.getElementById('video-results');
 
-  const stagingCard = document.getElementById('video-staging-card');
-  const stagingPreview = document.getElementById('video-staging-preview');
-  const stagingFilename = document.getElementById('video-staging-filename');
-  const stagingDims = document.getElementById('video-staging-dims');
-  const btnAutoDetect = document.getElementById('btn-video-auto-detect');
-  const btnChangeFile = document.getElementById('btn-video-change-file');
+  const metaFilename = document.getElementById('video-staging-filename');
+  const metaDims = document.getElementById('video-staging-dims');
 
-  const tunerContainer = document.getElementById('video-tuner-container');
-  const mainCanvas = document.getElementById('video-main-canvas');
-  const zoomCanvas = document.getElementById('video-zoom-canvas');
-  const zoomCleanedCanvas = document.getElementById('video-zoom-cleaned-canvas');
+  const step1Desc = document.getElementById('video-step-1-desc');
+  const step2Desc = document.getElementById('video-step-2-desc');
+  const step3Desc = document.getElementById('video-step-3-desc');
 
   const sliderGain = document.getElementById('slider-video-gain');
   const sliderScale = document.getElementById('slider-video-scale');
@@ -1709,40 +1799,28 @@ function initVideoRemover() {
 
   const btnResetSliders = document.getElementById('btn-video-reset-sliders');
   const btnExport = document.getElementById('btn-video-export');
+  const btnReplace = document.getElementById('btn-video-change-file-tuner');
+
+  const btnPlay = document.getElementById('btn-video-play');
+  const iconPlay = document.getElementById('icon-video-play');
+  const btnStepBack = document.getElementById('btn-video-step-back');
+  const btnStepForward = document.getElementById('btn-video-step-forward');
+  const timeReadout = document.getElementById('lbl-video-time');
+  const timelineTrack = document.getElementById('video-timeline-track');
+  const timelinePlayed = document.getElementById('video-timeline-played');
+  const timelineThumb = document.getElementById('video-timeline-thumb');
+  const thumbStrip = document.getElementById('video-thumbnail-strip');
 
   if (!dropzone || !fileInput) return;
 
   let currentFile = null;
   let currentPreviewFrame = null;
   let currentBase = null;
-  let currentOriginalBitmap = null;
   let currentDetected = null;
-  let isProcessing = false;
+  let isPlaying = false;
+  let animFrameId = null;
 
   const currentSettings = { gain: 0.6, offsetX: -24, offsetY: -24, sizeScale: 1 };
-
-  function setDropzoneLoading(loading, message = 'Extracting best frame...') {
-    isProcessing = loading;
-    if (loading) {
-      dropzone.classList.add('loading');
-      dropzone.innerHTML = `
-        <div class="dropzone-loader">
-          <div class="dropzone-spinner"></div>
-          <p class="dropzone-title text-indigo-600">${message}</p>
-          <p class="dropzone-sub">Scanning video frames & auto-detecting watermark...</p>
-        </div>
-      `;
-    } else {
-      dropzone.classList.remove('loading');
-      dropzone.innerHTML = `
-        <div class="dropzone-icon">
-          <iconify-icon icon="ph:video-bold"></iconify-icon>
-        </div>
-        <p class="dropzone-title">Upload or drag a Gemini Veo 3 video</p>
-        <p class="dropzone-sub">Supports MP4, WebM, MOV</p>
-      `;
-    }
-  }
 
   function updateSliderLabels() {
     if (lblGain) lblGain.textContent = `${currentSettings.gain.toFixed(2)}x`;
@@ -1751,26 +1829,27 @@ function initVideoRemover() {
     if (lblOffsetY) lblOffsetY.textContent = `${currentSettings.offsetY}px`;
   }
 
-  function updateDetectBadge() {
-    const badgeEl = document.getElementById('video-detect-badge');
-    if (!badgeEl) return;
-    if (currentDetected) {
-      if (currentDetected.matchFound) {
-        badgeEl.className = 'detect-badge';
-        badgeEl.innerHTML = `<iconify-icon icon="ph:scan" width="16" style="color: #6366f1;"></iconify-icon> <span>Auto-Detected: <strong>${currentDetected.name}</strong> (${Math.round(currentDetected.score * 100)}% match)</span>`;
-        badgeEl.classList.remove('hidden');
-      } else {
-        badgeEl.className = 'detect-badge warning';
-        badgeEl.innerHTML = `<iconify-icon icon="ph:info" width="16" style="color: #d97706;"></iconify-icon> <span>Standard Preset Applied (${currentDetected.name})</span>`;
-        badgeEl.classList.remove('hidden');
-      }
-    } else {
-      badgeEl.classList.add('hidden');
-    }
+  function bindSlider(element, prop, isFloat = false) {
+    if (!element) return;
+    element.addEventListener('input', (e) => {
+      currentSettings[prop] = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+      updateSliderLabels();
+      renderFrame();
+    });
   }
 
+  bindSlider(sliderGain, 'gain', true);
+  bindSlider(sliderScale, 'sizeScale', true);
+  bindSlider(sliderOffsetX, 'offsetX', false);
+  bindSlider(sliderOffsetY, 'offsetY', false);
+
+  btnResetSliders?.addEventListener('click', () => {
+    applyAutoSettings();
+    showToast('Video watermark parameters reset');
+  });
+
   function applyAutoSettings() {
-    const w = currentPreviewFrame ? currentPreviewFrame.width : 720;
+    const w = currentPreviewFrame ? currentPreviewFrame.width : 1280;
     const h = currentPreviewFrame ? currentPreviewFrame.height : 720;
 
     let p;
@@ -1781,8 +1860,10 @@ function initVideoRemover() {
         offsetY: currentDetected.offsetY,
         sizeScale: currentDetected.sizeScale
       };
+      if (step2Desc) step2Desc.textContent = `${currentDetected.name} (${Math.round(currentDetected.score * 100)}%)`;
     } else {
       p = getAdaptiveVideoPreset('veo', w, h);
+      if (step2Desc) step2Desc.textContent = 'Veo Video Inset';
     }
     Object.assign(currentSettings, p);
 
@@ -1799,296 +1880,138 @@ function initVideoRemover() {
     if (sliderGain) sliderGain.value = currentSettings.gain;
     if (sliderScale) sliderScale.value = currentSettings.sizeScale;
 
-    const activeKey = (currentDetected && currentDetected.presetKey) || 'veo';
-    document.querySelectorAll('#panel-video .btn-preset').forEach(b => {
-      b.classList.toggle('active', b.dataset.preset === activeKey);
-    });
-
     updateSliderLabels();
-    updateDetectBadge();
-    renderTuner();
+    renderFrame();
   }
 
-  const vidPresetButtons = document.querySelectorAll('#panel-video .btn-preset');
-  vidPresetButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      vidPresetButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const presetKey = btn.dataset.preset;
-      const w = currentPreviewFrame ? currentPreviewFrame.width : 720;
-      const h = currentPreviewFrame ? currentPreviewFrame.height : 720;
-      const p = getAdaptiveVideoPreset(presetKey, w, h);
-      Object.assign(currentSettings, p);
-      if (sliderOffsetX) sliderOffsetX.value = currentSettings.offsetX;
-      if (sliderOffsetY) sliderOffsetY.value = currentSettings.offsetY;
-      if (sliderGain) sliderGain.value = currentSettings.gain;
-      if (sliderScale) sliderScale.value = currentSettings.sizeScale;
-      updateSliderLabels();
-      renderTuner();
-    });
+  function renderFrame() {
+    if (!videoSrc || !mainCanvas || !videoEngine) return;
+    if (videoSrc.videoWidth === 0) return;
+
+    const w = videoSrc.videoWidth;
+    const h = videoSrc.videoHeight;
+    mainCanvas.width = w;
+    mainCanvas.height = h;
+
+    const ctx = mainCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(videoSrc, 0, 0, w, h);
+
+    const imgData = ctx.getImageData(0, 0, w, h);
+    cleanFrame(videoEngine.sparkleImage, imgData, w, h, currentBase, currentSettings);
+    ctx.putImageData(imgData, 0, 0);
+
+    updateTimeReadout();
+  }
+
+  function formatTime(sec) {
+    if (isNaN(sec)) return '00:00.00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    const ms = Math.floor((sec % 1) * 100);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+  }
+
+  function updateTimeReadout() {
+    if (!videoSrc) return;
+    const cur = videoSrc.currentTime || 0;
+    const dur = videoSrc.duration || 0;
+    if (timeReadout) timeReadout.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+    const pct = dur > 0 ? (cur / dur) * 100 : 0;
+    if (timelinePlayed) timelinePlayed.style.width = `${pct}%`;
+    if (timelineThumb) timelineThumb.style.left = `${pct}%`;
+  }
+
+  function togglePlay() {
+    if (!videoSrc) return;
+    if (videoSrc.paused || videoSrc.ended) {
+      videoSrc.play();
+      isPlaying = true;
+      if (iconPlay) iconPlay.setAttribute('icon', 'ph:pause-fill');
+      loopPlayback();
+    } else {
+      videoSrc.pause();
+      isPlaying = false;
+      if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+    }
+  }
+
+  function loopPlayback() {
+    if (!isPlaying) return;
+    renderFrame();
+    animFrameId = requestAnimationFrame(loopPlayback);
+  }
+
+  btnPlay?.addEventListener('click', togglePlay);
+
+  btnStepBack?.addEventListener('click', () => {
+    if (!videoSrc) return;
+    videoSrc.pause();
+    isPlaying = false;
+    if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
+    videoSrc.currentTime = Math.max(0, videoSrc.currentTime - 1 / 30);
+    renderFrame();
   });
 
-  function bindSlider(element, prop, isFloat = false) {
-    if (!element) return;
-    element.addEventListener('input', (e) => {
-      currentSettings[prop] = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
-      updateSliderLabels();
-      renderTuner();
-    });
-  }
-
-  bindSlider(sliderGain, 'gain', true);
-  bindSlider(sliderScale, 'sizeScale', true);
-  bindSlider(sliderOffsetX, 'offsetX', false);
-  bindSlider(sliderOffsetY, 'offsetY', false);
-
-  btnResetSliders?.addEventListener('click', () => {
-    applyAutoSettings();
+  btnStepForward?.addEventListener('click', () => {
+    if (!videoSrc) return;
+    videoSrc.pause();
+    isPlaying = false;
+    if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
+    videoSrc.currentTime = Math.min(videoSrc.duration, videoSrc.currentTime + 1 / 30);
+    renderFrame();
   });
 
-  dropzone.onclick = () => {
-    if (!isProcessing) fileInput.click();
-  };
+  timelineTrack?.addEventListener('click', (e) => {
+    if (!videoSrc || !videoSrc.duration) return;
+    const rect = timelineTrack.getBoundingClientRect();
+    const pos = (e.clientX - rect.left) / rect.width;
+    videoSrc.currentTime = pos * videoSrc.duration;
+    renderFrame();
+  });
 
-  dropzone.ondragover = (e) => {
-    e.preventDefault();
-    if (!isProcessing) dropzone.classList.add('drag-over');
-  };
+  // Extract 12 thumbnails along video timeline
+  async function generateThumbnailStrip(file, duration) {
+    if (!thumbStrip) return;
+    thumbStrip.innerHTML = '';
+    const numThumbs = 12;
+    const interval = duration / numThumbs;
 
-  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
+    const v = document.createElement('video');
+    v.muted = true;
+    v.src = URL.createObjectURL(file);
+    await new Promise(r => { v.onloadedmetadata = r; });
 
-  dropzone.ondrop = (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (isProcessing) return;
-    const droppedFiles = Array.from(e.dataTransfer?.files || []);
-    if (droppedFiles.length > 1) {
-      if (typeof switchTab === 'function') switchTab('batch', true);
-      if (typeof startBatchProcess === 'function') startBatchProcess(droppedFiles);
-    } else if (droppedFiles.length === 1) {
-      handleVideoFile(droppedFiles[0]);
-    }
-  };
+    for (let i = 0; i < numThumbs; i++) {
+      const t = i * interval + interval / 2;
+      v.currentTime = t;
+      await new Promise(r => { v.onseeked = r; });
 
-  fileInput.onchange = (e) => {
-    if (isProcessing) return;
-    const selectedFiles = Array.from(e.target.files || []);
-    if (selectedFiles.length > 1) {
-      if (typeof switchTab === 'function') switchTab('batch', true);
-      if (typeof startBatchProcess === 'function') startBatchProcess(selectedFiles);
-    } else if (selectedFiles.length === 1) {
-      handleVideoFile(selectedFiles[0]);
-    }
-    fileInput.value = '';
-  };
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 36;
+      c.getContext('2d').drawImage(v, 0, 0, 64, 36);
 
-  function isFrameMeaningful(imageData) {
-    const data = imageData.data;
-    let sum = 0, sumSq = 0;
-    const len = data.length;
-    const step = Math.max(4, Math.floor(len / 2000) * 4);
-    let samples = 0;
-    for (let i = 0; i < len; i += step) {
-      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      sum += lum;
-      sumSq += lum * lum;
-      samples++;
-    }
-    if (samples === 0) return false;
-    const mean = sum / samples;
-    const variance = (sumSq / samples) - (mean * mean);
-    return mean > 12 && mean < 245 && variance > 10;
-  }
+      const div = document.createElement('div');
+      div.className = 'thumbnail-frame';
+      div.title = `Seek to ${formatTime(t)}`;
+      div.appendChild(c);
 
-  function grabPreviewFrame(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const v = document.createElement('video');
-      v.preload = 'auto';
-      v.muted = true;
-      v.playsInline = true;
-      v.src = url;
-
-      let cleanedUp = false;
-      const cleanup = () => {
-        if (!cleanedUp) {
-          cleanedUp = true;
-          URL.revokeObjectURL(url);
-          v.removeAttribute('src');
-          v.load();
-        }
+      div.onclick = () => {
+        videoSrc.currentTime = t;
+        renderFrame();
       };
-
-      const globalTimeout = setTimeout(() => {
-        cleanup();
-        reject(new Error('Timed out waiting for video frame extraction.'));
-      }, 10000);
-
-      v.onerror = () => {
-        clearTimeout(globalTimeout);
-        cleanup();
-        reject(new Error('Could not read this video file.'));
-      };
-
-      const onReady = async () => {
-        v.onloadedmetadata = null;
-        v.onloadeddata = null;
-
-        const duration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1;
-        const ratios = [0.35, 0.50, 0.20, 0.65, 0.10];
-        const timestamps = ratios.map(r => Math.min(Math.max(duration * r, 0.05), Math.max(0.05, duration - 0.05)));
-
-        let bestFrame = null;
-        let highestVariance = -1;
-
-        const w = v.videoWidth || 720;
-        const h = v.videoHeight || 1280;
-        const c = document.createElement('canvas');
-        c.width = w;
-        c.height = h;
-        const cx = c.getContext('2d', { willReadFrequently: true });
-
-        const seekAndCapture = (time) => {
-          return new Promise((res) => {
-            let done = false;
-            const finish = () => {
-              if (done) return;
-              done = true;
-              clearTimeout(seekTimer);
-              v.removeEventListener('seeked', onSeeked);
-              try {
-                cx.drawImage(v, 0, 0, w, h);
-                const imageData = cx.getImageData(0, 0, w, h);
-                res(imageData);
-              } catch {
-                res(null);
-              }
-            };
-
-            const onSeeked = () => {
-              setTimeout(finish, 20);
-            };
-
-            const seekTimer = setTimeout(() => {
-              finish();
-            }, 1200);
-
-            v.addEventListener('seeked', onSeeked, { once: true });
-            try {
-              if (Math.abs(v.currentTime - time) < 0.01) {
-                finish();
-              } else {
-                v.currentTime = time;
-              }
-            } catch {
-              finish();
-            }
-          });
-        };
-
-        for (const t of timestamps) {
-          const imageData = await seekAndCapture(t);
-          if (!imageData) continue;
-
-          if (isFrameMeaningful(imageData)) {
-            clearTimeout(globalTimeout);
-            cleanup();
-            resolve({ width: w, height: h, imageData });
-            return;
-          }
-
-          const data = imageData.data;
-          let sum = 0, sumSq = 0, samples = 0;
-          const step = Math.max(4, Math.floor(data.length / 1000) * 4);
-          for (let i = 0; i < data.length; i += step) {
-            const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-            sum += lum;
-            sumSq += lum * lum;
-            samples++;
-          }
-          const mean = sum / (samples || 1);
-          const variance = (sumSq / (samples || 1)) - (mean * mean);
-          if (variance > highestVariance) {
-            highestVariance = variance;
-            bestFrame = imageData;
-          }
-        }
-
-        clearTimeout(globalTimeout);
-        cleanup();
-        if (bestFrame) {
-          resolve({ width: w, height: h, imageData: bestFrame });
-        } else {
-          reject(new Error('Could not extract a readable frame from this video.'));
-        }
-      };
-
-      if (v.readyState >= 1) {
-        onReady();
-      } else {
-        v.onloadedmetadata = onReady;
-        v.onloadeddata = onReady;
-      }
-    });
-  }
-
-  function renderTuner() {
-    if (!currentPreviewFrame || !mainCanvas || !videoEngine) return;
-    const { width, height, imageData } = currentPreviewFrame;
-
-    const offscreen = document.createElement('canvas');
-    offscreen.width = width;
-    offscreen.height = height;
-
-    const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-    const { wm, roi } = cleanFrame(videoEngine.sparkleImage, copy, width, height, currentBase, currentSettings);
-    offscreen.getContext('2d').putImageData(copy, 0, 0);
-
-    const maxW = 360;
-    const scale = Math.min(1, maxW / width);
-    mainCanvas.width = Math.round(width * scale);
-    mainCanvas.height = Math.round(height * scale);
-    const mctx = mainCanvas.getContext('2d');
-    mctx.drawImage(offscreen, 0, 0, mainCanvas.width, mainCanvas.height);
-    mctx.strokeStyle = '#6366f1';
-    mctx.lineWidth = 2;
-    mctx.strokeRect(wm.x * scale, wm.y * scale, wm.width * scale, wm.height * scale);
-
-    if (zoomCanvas && currentOriginalBitmap) {
-      const zctx = zoomCanvas.getContext('2d');
-      zctx.imageSmoothingEnabled = false;
-      zctx.clearRect(0, 0, zoomCanvas.width, zoomCanvas.height);
-      zctx.drawImage(currentOriginalBitmap, roi.x, roi.y, roi.width, roi.height, 0, 0, zoomCanvas.width, zoomCanvas.height);
-      const sx = zoomCanvas.width / roi.width;
-      const sy = zoomCanvas.height / roi.height;
-      zctx.strokeStyle = '#2563eb';
-      zctx.lineWidth = 2;
-      zctx.strokeRect((wm.x - roi.x) * sx, (wm.y - roi.y) * sy, wm.width * sx, wm.height * sy);
+      thumbStrip.appendChild(div);
     }
-
-    if (zoomCleanedCanvas) {
-      const zctx = zoomCleanedCanvas.getContext('2d');
-      zctx.imageSmoothingEnabled = false;
-      zctx.clearRect(0, 0, zoomCleanedCanvas.width, zoomCleanedCanvas.height);
-      zctx.drawImage(offscreen, roi.x, roi.y, roi.width, roi.height, 0, 0, zoomCleanedCanvas.width, zoomCleanedCanvas.height);
-      const sx = zoomCleanedCanvas.width / roi.width;
-      const sy = zoomCleanedCanvas.height / roi.height;
-      zctx.strokeStyle = '#16a34a';
-      zctx.lineWidth = 2;
-      zctx.strokeRect((wm.x - roi.x) * sx, (wm.y - roi.y) * sy, wm.width * sx, wm.height * sy);
-    }
+    URL.revokeObjectURL(v.src);
   }
 
   async function handleVideoFile(file) {
-    if (!file.type.startsWith('video/')) return;
-    if (isProcessing) return;
-
-    setDropzoneLoading(true, 'Extracting best preview frame...');
+    if (!file.type.startsWith('video/')) {
+      showToast('Please select a valid video file (MP4, WebM, MOV)', 'danger');
+      return;
+    }
     currentFile = file;
-
-    resultsArea.classList.add('hidden');
-    statusContainer.classList.add('hidden');
-    tunerContainer.classList.add('hidden');
 
     try {
       if (!videoEngine) {
@@ -2097,1088 +2020,423 @@ function initVideoRemover() {
 
       currentPreviewFrame = await grabPreviewFrame(file);
 
-      // Render video thumbnail to staging card
-      if (stagingPreview) {
-        const c = document.createElement('canvas');
-        c.width = currentPreviewFrame.width;
-        c.height = currentPreviewFrame.height;
-        c.getContext('2d').putImageData(currentPreviewFrame.imageData, 0, 0);
-        stagingPreview.src = c.toDataURL('image/jpeg', 0.85);
-      }
-      if (stagingFilename) {
-        stagingFilename.textContent = file.name;
-      }
-      if (stagingDims) {
-        stagingDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
-      }
+      if (metaFilename) metaFilename.textContent = file.name;
+      if (metaDims) metaDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
+      if (step1Desc) step1Desc.textContent = `High-variance locked (${currentPreviewFrame.width}x${currentPreviewFrame.height})`;
 
-      // Hide dropzone and show staging card
-      dropzone.classList.add('hidden');
-      if (stagingCard) {
-        stagingCard.classList.remove('hidden');
-        smoothScrollTo(stagingCard);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Could not generate preview frame for video: ' + (err.message || err));
-    } finally {
-      setDropzoneLoading(false);
-    }
-  }
-
-  // Handle "Try Auto Detect" button (triggers Direct Link & reveals tuner)
-  btnAutoDetect?.addEventListener('click', async () => {
-    if (!currentFile || !videoEngine || !currentPreviewFrame) return;
-
-    // Trigger Monetag Direct Link (formerly on Download button)
-    handleAutoDetectAd();
-
-    // Hide staging card
-    if (stagingCard) stagingCard.classList.add('hidden');
-
-    try {
       currentBase = videoEngine.getVeoWatermark(currentPreviewFrame.width, currentPreviewFrame.height);
-      if (currentOriginalBitmap) currentOriginalBitmap.close();
-      currentOriginalBitmap = await createImageBitmap(currentPreviewFrame.imageData);
-
-      // Run Auto-Detection on video preview frame
       currentDetected = detectVideoWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, videoEngine.sparkleImage);
 
-      tunerContainer.classList.remove('hidden');
-      applyAutoSettings();
-      smoothScrollTo(tunerContainer);
-    } catch (err) {
-      console.error('Error running video auto detection:', err);
-    }
-  });
+      dropzone.classList.add('hidden');
+      stageLoaded.classList.remove('hidden');
 
-  // Reset/Change Video Helper
-  function resetVideoUploader() {
-    if (stagingCard) stagingCard.classList.add('hidden');
-    tunerContainer.classList.add('hidden');
-    statusContainer.classList.add('hidden');
-    resultsArea.classList.add('hidden');
-    dropzone.classList.remove('hidden');
-    fileInput.value = '';
-    currentFile = null;
-    currentPreviewFrame = null;
-    if (currentOriginalBitmap) {
-      currentOriginalBitmap.close();
-      currentOriginalBitmap = null;
+      videoSrc.src = URL.createObjectURL(file);
+      await new Promise(r => { videoSrc.onloadedmetadata = r; });
+
+      applyAutoSettings();
+      generateThumbnailStrip(file, videoSrc.duration);
+      showToast('Video analyzed! Watermark locked on high-contrast frame.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Error loading video: ' + (err.message || err), 'danger');
     }
-    smoothScrollTo(dropzone);
   }
 
-  btnChangeFile?.addEventListener('click', resetVideoUploader);
-  document.getElementById('btn-video-change-file-tuner')?.addEventListener('click', resetVideoUploader);
+  dropzone.onclick = () => fileInput.click();
+  dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); };
+  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
+  dropzone.ondrop = (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleVideoFile(e.dataTransfer.files[0]);
+  };
+  fileInput.onchange = (e) => {
+    if (e.target.files.length) handleVideoFile(e.target.files[0]);
+    fileInput.value = '';
+  };
 
+  btnReplace?.addEventListener('click', () => fileInput.click());
+
+  // Process Full Video
   btnExport?.addEventListener('click', async () => {
     if (!currentFile || !videoEngine) return;
-
-    handleExportAd();
-
-    // Preload Monetag Popunder for Download button
-    loadMonetagPopunder();
-
-    tunerContainer.classList.add('hidden');
-    statusContainer.classList.remove('hidden');
-    resultsArea.classList.add('hidden');
-    progressBar.style.width = '0%';
-    progressText.textContent = '0%';
-    smoothScrollTo(statusContainer);
-
     try {
+      handleExportAd();
+      loadMonetagPopunder();
+
+      if (videoSrc) videoSrc.pause();
+      isPlaying = false;
+
+      statusOverlay.classList.remove('hidden');
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressText) progressText.textContent = '0%';
+
       const res = await videoEngine.process(currentFile, {
         ...currentSettings,
         onProgress: ({ progress }) => {
           const pct = Math.round(progress * 100);
-          progressBar.style.width = `${pct}%`;
-          progressText.textContent = `${pct}% — keep tab open`;
+          if (progressBar) progressBar.style.width = `${pct}%`;
+          if (progressText) progressText.textContent = `Encoding ${pct}%`;
         }
       });
 
-      statusContainer.classList.add('hidden');
-      resultsArea.classList.remove('hidden');
+      statusOverlay.classList.add('hidden');
 
-      resultsArea.innerHTML = `
-        <div class="card">
-          <h3 class="font-bold text-center mb-4">Video Watermark Cleaned Successfully!</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <p class="text-xs mb-2">Original Video</p>
-              <video src="${res.originalUrl}" controls playsinline style="width:100%; max-height:280px;"></video>
-            </div>
-            <div>
-              <p class="text-xs mb-2 text-green-600">Cleaned Video</p>
-              <video src="${res.url}" controls playsinline style="width:100%; max-height:280px;"></video>
-            </div>
-          </div>
-          <div class="mt-4 text-center flex items-center justify-center gap-3">
-            <a href="${res.url}" download="clean_${currentFile.name}" class="btn btn-primary" id="btn-video-download">
-              <iconify-icon icon="ph:download-simple-bold" width="16"></iconify-icon>
-              Download Cleaned Video MP4
-            </a>
-            <button type="button" class="btn btn-secondary text-xs" id="btn-video-clean-another">
-              <iconify-icon icon="ph:arrows-clockwise" width="16"></iconify-icon>
-              Clean Another Video
-            </button>
-          </div>
-          ${getPromoCardHtml('video')}
-        </div>
-      `;
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `unmark_${currentFile.name.replace(/\.[^/.]+$/, '')}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-      document.getElementById('btn-video-clean-another')?.addEventListener('click', resetVideoUploader);
-
-      smoothScrollTo(resultsArea);
+      showToast('Video watermark removed! Clean MP4 downloaded.', 'success');
     } catch (err) {
       console.error(err);
-      statusContainer.classList.add('hidden');
-      tunerContainer.classList.remove('hidden');
-      alert(`Video processing failed: ${err.message || err}`);
+      statusOverlay.classList.add('hidden');
+      showToast('Video processing failed: ' + (err.message || err), 'danger');
     }
   });
 }
 
-// ── Results Screen Promo Card Generator ──
-function getPromoCardHtml(type = 'image') {
-  return `
-    <div class="results-promo-banner" data-auto-favicon="https://ishara-madu.github.io/online-image-converter/">
-      <div class="results-promo-badge-row">
-        <span class="results-promo-tag">
-          Recommended Free Tool
-        </span>
-        <span class="badge-featured">100% Free &amp; Fast</span>
-      </div>
-      <div class="results-promo-body">
-        <div class="results-promo-icon-box">
-          <img src="https://ishara-madu.github.io/online-image-converter/favicon.ico"
-            onerror="this.onerror=null; this.src='https://www.google.com/s2/favicons?domain=ishara-madu.github.io&amp;sz=64';"
-            alt="Online Image Converter Favicon"
-            class="tool-favicon-img" width="26" height="26" loading="lazy" />
-        </div>
-        <div class="results-promo-info">
-          <h4 class="results-promo-title">Convert image formats with Online Image Converter</h4>
-          <p class="results-promo-desc">Batch convert your cleaned files to WebP, PNG, JPG, AVIF, or GIF with lossless quality right in your browser.</p>
-        </div>
-        <a href="https://ishara-madu.github.io/online-image-converter/" target="_blank" rel="noopener noreferrer" class="results-promo-btn">
-          <span>Try Image Converter</span>
-          <iconify-icon icon="ph:arrow-square-out-bold" width="16"></iconify-icon>
-        </a>
-      </div>
-    </div>
-  `;
-}
-
-// ── GitHub Star Count Fetcher ──
-async function fetchGitHubStars() {
-  const starCountEl = document.getElementById('star-count-num');
-  if (!starCountEl) return;
-  try {
-    const res = await fetch('https://api.github.com/repos/ishara-madu/gemini-watermark-remover');
-    if (res.ok) {
-      const data = await res.json();
-      if (typeof data.stargazers_count === 'number') {
-        starCountEl.textContent = data.stargazers_count;
-      }
-    }
-  } catch (e) {
-    console.warn('Could not fetch GitHub star count:', e);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  fetchGitHubStars();
-  initCustomSelects();
-  initMobileMenu();
-  initAutoFavicons();
-});
-fetchGitHubStars();
-
-// ── Automatic Favicon Resolver for Tools ──
-function initAutoFavicons() {
-  document.querySelectorAll('[data-auto-favicon]').forEach((el) => {
-    const targetUrl = el.getAttribute('data-auto-favicon') || el.getAttribute('href');
-    if (!targetUrl) return;
-
-    const img = el.querySelector('.tool-favicon-img');
-    if (!img) return;
-
-    try {
-      const parsedUrl = new URL(targetUrl, window.location.href);
-      const domain = parsedUrl.hostname;
-      const directFavicon = `${parsedUrl.origin}${parsedUrl.pathname.replace(/\/+$/, '')}/assets/favicon-96x96.png`;
-      const fallbackFavicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-
-      img.onerror = () => {
-        if (img.src !== fallbackFavicon) {
-          img.src = fallbackFavicon;
-        }
-      };
-
-      if (!img.src || img.src.includes('undefined')) {
-        img.src = directFavicon;
-      }
-    } catch (e) {
-      console.warn('Auto favicon parsing failed:', e);
-    }
-  });
-}
-
-// ── Mobile Hamburger Menu & Navbar Interactions ──
-function initMobileMenu() {
-  const menuBtn = document.getElementById('mobile-menu-btn');
-  const headerActions = document.getElementById('header-actions');
-  if (!menuBtn || !headerActions) return;
-
-  const iconHamburger = menuBtn.querySelector('.icon-hamburger');
-  const iconClose = menuBtn.querySelector('.icon-close');
-
-  const closeMenu = () => {
-    headerActions.classList.remove('open');
-    menuBtn.classList.remove('active');
-    menuBtn.setAttribute('aria-expanded', 'false');
-    if (iconHamburger && iconClose) {
-      iconHamburger.classList.remove('hidden');
-      iconClose.classList.add('hidden');
-    }
-  };
-
-  menuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = headerActions.classList.toggle('open');
-    menuBtn.classList.toggle('active', isOpen);
-    menuBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    if (iconHamburger && iconClose) {
-      iconHamburger.classList.toggle('hidden', isOpen);
-      iconClose.classList.toggle('hidden', !isOpen);
-    }
-  });
-
-  // Close mobile menu when clicking nav links or promo links
-  headerActions.querySelectorAll('a').forEach((link) => {
-    link.addEventListener('click', () => {
-      closeMenu();
-    });
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!headerActions.contains(e.target) && !menuBtn.contains(e.target)) {
-      closeMenu();
-    }
-  });
-
-  // Tools dropdown click toggle (for touch/click accessibility)
-  const toolsDropdown = document.getElementById('tools-dropdown');
-  const toolsBtn = document.getElementById('tools-dropdown-btn');
-  if (toolsDropdown && toolsBtn) {
-    toolsBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = toolsDropdown.classList.toggle('open');
-      toolsBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    });
-
-    document.addEventListener('click', (e) => {
-      if (!toolsDropdown.contains(e.target)) {
-        toolsDropdown.classList.remove('open');
-        toolsBtn.setAttribute('aria-expanded', 'false');
-      }
-    });
-  }
-}
-
-// ── Custom Select Component Logic ──
-function initCustomSelects() {
-  document.querySelectorAll('.custom-select').forEach((selectEl) => {
-    const targetId = selectEl.getAttribute('data-select-target');
-    const nativeSelect = document.getElementById(targetId);
-    if (!nativeSelect) return;
-
-    const trigger = selectEl.querySelector('.custom-select-trigger');
-    const valueDisplay = selectEl.querySelector('.custom-select-value');
-    const options = selectEl.querySelectorAll('.custom-option');
-
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      document.querySelectorAll('.custom-select.open').forEach((other) => {
-        if (other !== selectEl) other.classList.remove('open');
-      });
-      selectEl.classList.toggle('open');
-    });
-
-    options.forEach((opt) => {
-      opt.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const val = opt.getAttribute('data-value');
-        const text = opt.querySelector('.option-title').textContent;
-
-        valueDisplay.textContent = text;
-        options.forEach((o) => o.classList.remove('selected'));
-        opt.classList.add('selected');
-
-        nativeSelect.value = val;
-        nativeSelect.dispatchEvent(new Event('change'));
-
-        selectEl.classList.remove('open');
-      });
-    });
-  });
-
-  document.addEventListener('click', () => {
-    document.querySelectorAll('.custom-select.open').forEach((s) => s.classList.remove('open'));
-  });
-}
-
-// ── Batch Folder & ZIP Remover Logic ──
+// ── 5. Batch Remover Controller ──
 function initBatch() {
   const dropzone = document.getElementById('batch-dropzone');
   const folderInput = document.getElementById('batch-folder-input');
   const fileInput = document.getElementById('batch-file-input');
   const btnSelectFolder = document.getElementById('btn-select-batch-folder');
   const btnSelectZip = document.getElementById('btn-select-batch-zip');
-  const optionsCard = document.getElementById('batch-options-card');
 
   const statusCard = document.getElementById('batch-status-card');
-  const statusHeading = document.getElementById('batch-status-heading');
-  const progressBar = document.getElementById('batch-progress-bar');
-  const progressPct = document.getElementById('batch-progress-pct');
-  const statTotal = document.getElementById('batch-stat-total');
+  const summaryTotal = document.getElementById('batch-summary-total');
   const statCompleted = document.getElementById('batch-stat-completed');
   const statProcessing = document.getElementById('batch-stat-processing');
   const statFailed = document.getElementById('batch-stat-failed');
+  const progressBar = document.getElementById('batch-progress-bar');
+  const filesList = document.getElementById('batch-files-list');
   const btnBatchDownload = document.getElementById('btn-batch-download');
   const btnCleanAnother = document.getElementById('btn-batch-clean-another');
-  const filesList = document.getElementById('batch-files-list');
 
+  const previewModal = document.getElementById('batch-preview-modal');
+  const modalFilename = document.getElementById('modal-filename');
+  const modalImg = document.getElementById('modal-img-preview');
+  const modalVid = document.getElementById('modal-vid-preview');
+  const btnModalClean = document.getElementById('btn-modal-show-clean');
+  const btnModalOrig = document.getElementById('btn-modal-show-orig');
+  const btnModalClose = document.getElementById('btn-modal-close');
+  const btnModalCloseFooter = document.getElementById('btn-modal-close-footer');
+  const btnModalDownload = document.getElementById('btn-modal-download');
+
+  let activeModalItem = null;
   let batchPreset = 'auto';
 
-  // Preset buttons
-  const presetBtns = document.querySelectorAll('[data-batch-preset]');
-  presetBtns.forEach((btn) => {
+  document.querySelectorAll('[data-batch-preset]').forEach(btn => {
     btn.addEventListener('click', () => {
-      presetBtns.forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('[data-batch-preset]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       batchPreset = btn.getAttribute('data-batch-preset') || 'auto';
     });
   });
 
-  if (btnSelectFolder && folderInput) {
-    btnSelectFolder.addEventListener('click', (e) => {
-      e.stopPropagation();
-      folderInput.click();
-    });
-    folderInput.addEventListener('change', (e) => {
-      if (e.target.files && e.target.files.length > 0) {
-        startBatchProcess(Array.from(e.target.files));
-      }
-    });
-  }
+  btnSelectFolder?.addEventListener('click', (e) => { e.stopPropagation(); folderInput?.click(); });
+  btnSelectZip?.addEventListener('click', (e) => { e.stopPropagation(); fileInput?.click(); });
 
-  if (btnSelectZip && fileInput) {
-    btnSelectZip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      fileInput.click();
-    });
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files && e.target.files.length > 0) {
-        startBatchProcess(Array.from(e.target.files));
-      }
-    });
-  }
+  folderInput?.addEventListener('change', (e) => {
+    if (e.target.files.length) startBatchProcess(Array.from(e.target.files));
+    folderInput.value = '';
+  });
+  fileInput?.addEventListener('change', (e) => {
+    if (e.target.files.length) startBatchProcess(Array.from(e.target.files));
+    fileInput.value = '';
+  });
 
-  if (dropzone) {
-    dropzone.addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      if (folderInput) folderInput.click();
-    });
-    ['dragenter', 'dragover'].forEach((name) => {
-      dropzone.addEventListener(name, (e) => {
-        e.preventDefault();
-        dropzone.classList.add('active');
-      });
-    });
-    ['dragleave', 'drop'].forEach((name) => {
-      dropzone.addEventListener(name, (e) => {
-        e.preventDefault();
-        dropzone.classList.remove('active');
-      });
-    });
-    dropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropzone.classList.remove('active');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        startBatchProcess(Array.from(e.dataTransfer.files));
-      }
-    });
-  }
+  dropzone?.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    folderInput?.click();
+  });
+  dropzone?.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) startBatchProcess(Array.from(e.dataTransfer.files));
+  });
 
-  if (btnCleanAnother) {
-    btnCleanAnother.addEventListener('click', () => {
-      if (folderInput) folderInput.value = '';
-      if (fileInput) fileInput.value = '';
-      if (statusCard) statusCard.classList.add('hidden');
-      if (dropzone) dropzone.classList.remove('hidden');
-      if (optionsCard) optionsCard.classList.remove('hidden');
-    });
+  btnCleanAnother?.addEventListener('click', () => {
+    statusCard?.classList.add('hidden');
+    dropzone?.classList.remove('hidden');
+    if (filesList) filesList.innerHTML = '';
+  });
+
+  function closeModal() {
+    if (previewModal) previewModal.classList.add('hidden');
+    if (modalVid) { modalVid.pause(); modalVid.src = ''; }
+    activeModalItem = null;
   }
+  btnModalClose?.addEventListener('click', closeModal);
+  btnModalCloseFooter?.addEventListener('click', closeModal);
+
+  btnModalClean?.addEventListener('click', () => {
+    btnModalClean.classList.add('active');
+    btnModalOrig.classList.remove('active');
+    if (activeModalItem) {
+      if (activeModalItem.isVideo) {
+        modalVid.src = activeModalItem.cleanUrl;
+      } else {
+        modalImg.src = activeModalItem.cleanUrl;
+      }
+    }
+  });
+
+  btnModalOrig?.addEventListener('click', () => {
+    btnModalOrig.classList.add('active');
+    btnModalClean.classList.remove('active');
+    if (activeModalItem) {
+      if (activeModalItem.isVideo) {
+        modalVid.src = activeModalItem.origUrl;
+      } else {
+        modalImg.src = activeModalItem.origUrl;
+      }
+    }
+  });
 
   async function startBatchProcess(files) {
     if (!files || files.length === 0) return;
 
-    if (dropzone) dropzone.classList.add('hidden');
-    if (optionsCard) optionsCard.classList.add('hidden');
-    if (statusCard) statusCard.classList.remove('hidden');
+    dropzone?.classList.add('hidden');
+    statusCard?.classList.remove('hidden');
+    if (filesList) filesList.innerHTML = '';
 
     const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
-    
-    // If ZIP is uploaded, inspect and unpack client-side if it contains videos
-    if (isSingleZip && window.JSZip && typeof VideoWatermarkEngine !== 'undefined' && VideoWatermarkEngine.isSupported()) {
+    let fileQueue = files;
+
+    if (isSingleZip && window.JSZip) {
       try {
         const zipData = await JSZip.loadAsync(files[0]);
         const entries = Object.keys(zipData.files);
-        const hasVidInZip = entries.some(e => /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(e));
-        if (hasVidInZip) {
-          const extractedFiles = [];
-          for (const [path, entry] of Object.entries(zipData.files)) {
-            if (entry.dir) continue;
+        const extracted = [];
+        for (const [path, entry] of Object.entries(zipData.files)) {
+          if (entry.dir) continue;
+          if (/\.(png|jpe?g|webp|mp4|webm|mov)$/i.test(path)) {
             const blob = await entry.async('blob');
             const fname = path.split('/').pop();
             const f = new File([blob], fname, { type: blob.type });
             Object.defineProperty(f, 'webkitRelativePath', { value: path });
-            extractedFiles.push(f);
-          }
-          if (extractedFiles.length > 0) {
-            await processBatchClientSide(extractedFiles, batchPreset);
-            return;
+            extracted.push(f);
           }
         }
+        if (extracted.length > 0) fileQueue = extracted;
       } catch (err) {
-        console.warn('Could not inspect zip client-side, falling back to server:', err);
+        console.warn('Zip inspect error, processing direct:', err);
       }
     }
 
-    const hasVideo = files.some(f => /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(f.name));
-    // When video files are uploaded in Batch, use the EXACT same Video Remover client-side engine!
-    if (hasVideo && typeof VideoWatermarkEngine !== 'undefined' && VideoWatermarkEngine.isSupported()) {
-      await processBatchClientSide(files, batchPreset);
-      return;
-    }
-
-    if (statusHeading) {
-      statusHeading.textContent = `Uploading ${files.length} file(s)...`;
-      statusHeading.style.color = '#0f172a';
-    }
-    if (progressBar) progressBar.style.width = '0%';
-    if (progressPct) progressPct.textContent = '0%';
-    if (statTotal) statTotal.textContent = files.length;
-    if (statCompleted) statCompleted.textContent = '0';
-    if (statProcessing) statProcessing.textContent = '0';
-    if (statFailed) statFailed.textContent = '0';
-    if (btnBatchDownload) btnBatchDownload.classList.add('hidden');
-    if (btnCleanAnother) btnCleanAnother.classList.add('hidden');
-    if (filesList) filesList.innerHTML = '<div style="padding: 1.5rem; text-align: center; color: #64748b; font-size: 0.85rem;"><iconify-icon icon="ph:spinner-gap-bold" class="spin" width="20"></iconify-icon><div style="margin-top: 6px;">Uploading files to server...</div></div>';
-
-    const formData = new FormData();
-    if (isSingleZip) {
-      formData.append('file', files[0]);
-    } else {
-      files.forEach((f) => {
-        const path = f.webkitRelativePath || f.name;
-        formData.append('files', f, path);
-      });
-    }
-    formData.append('preset', batchPreset);
-
-    try {
-      const res = await fetch('/api/v1/jobs', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        throw new Error('Server API returned ' + res.status);
-      }
-
-      const data = await res.json();
-      startBatchTracking(data.job_id);
-    } catch (err) {
-      console.warn('Backend server not available (e.g. GitHub Pages static host). Falling back to client-side browser processing:', err);
-      if (window.JSZip && !isSingleZip) {
-        await processBatchClientSide(files, batchPreset);
-      } else {
-        alert('Upload Error: ' + err.message + '\nPlease verify that python run.py is running.');
-        if (dropzone) dropzone.classList.remove('hidden');
-        if (optionsCard) optionsCard.classList.remove('hidden');
-        if (statusCard) statusCard.classList.add('hidden');
-      }
-    }
-  }
-
-  async function processBatchClientSide(files, presetKey) {
-    if (statusHeading) {
-      statusHeading.textContent = 'Processing Files in Browser...';
-      statusHeading.style.color = '#0f172a';
-    }
-    if (filesList) filesList.innerHTML = '';
-
-    const zip = new JSZip();
+    const total = fileQueue.length;
+    if (summaryTotal) summaryTotal.textContent = `${total} files`;
     let completed = 0;
     let failed = 0;
-    const total = files.length;
-    if (statTotal) statTotal.textContent = total;
 
-    if (!watermarkEngine) {
-      try {
-        watermarkEngine = await WatermarkEngine.create();
-      } catch (e) {
-        console.error('Failed to load WatermarkEngine in browser', e);
-      }
-    }
+    const zip = new JSZip();
 
-    const previewModal = document.getElementById('batch-preview-modal');
-    const modalFilename = document.getElementById('modal-filename');
-    const modalImgPreview = document.getElementById('modal-img-preview');
-    const modalVidPreview = document.getElementById('modal-vid-preview');
-    const btnModalDownload = document.getElementById('btn-modal-download');
-    const btnModalClose = document.getElementById('btn-modal-close');
-    const btnModalCloseFooter = document.getElementById('btn-modal-close-footer');
-    const btnModalShowClean = document.getElementById('btn-modal-show-clean');
-    const btnModalShowOrig = document.getElementById('btn-modal-show-orig');
+    if (!watermarkEngine) watermarkEngine = await WatermarkEngine.create();
+    if (!videoEngine) videoEngine = await VideoWatermarkEngine.create();
 
-    let activeModalItem = null;
-
-    function closeModal() {
-      if (previewModal) previewModal.classList.add('hidden');
-      if (modalVidPreview) {
-        modalVidPreview.pause();
-        modalVidPreview.src = '';
-      }
-      activeModalItem = null;
-    }
-
-    if (btnModalClose) btnModalClose.onclick = closeModal;
-    if (btnModalCloseFooter) btnModalCloseFooter.onclick = closeModal;
-    if (previewModal) {
-      previewModal.onclick = (e) => {
-        if (e.target === previewModal) closeModal();
-      };
-    }
-
-    if (btnModalShowClean && btnModalShowOrig) {
-      btnModalShowClean.onclick = () => {
-        btnModalShowClean.classList.add('active');
-        btnModalShowOrig.classList.remove('active');
-        if (activeModalItem && modalImgPreview) {
-          modalImgPreview.src = activeModalItem.cleanUrl;
-        }
-      };
-      btnModalShowOrig.onclick = () => {
-        btnModalShowOrig.classList.add('active');
-        btnModalShowClean.classList.remove('active');
-        if (activeModalItem && modalImgPreview) {
-          modalImgPreview.src = activeModalItem.origUrl;
-        }
-      };
-    }
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const relPath = file.webkitRelativePath || file.name;
-      const isImg = /\.(png|jpe?g|webp|bmp)$/i.test(file.name);
-
-      if (statProcessing) statProcessing.textContent = 1;
-
-      const row = document.createElement('div');
-      row.style.cssText =
-        'display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.85rem; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.85rem; gap: 0.75rem; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);';
-      row.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; flex: 1;">
-          <div style="width: 44px; height: 44px; background: #f1f5f9; color: #94a3b8; display: flex; align-items: center; justify-content: center; border-radius: 6px; flex-shrink: 0;"><iconify-icon icon="${isImg ? 'ph:image-bold' : 'ph:video-bold'}" width="20"></iconify-icon></div>
-          <div style="overflow: hidden; flex: 1;">
-            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #1e293b;">${file.name}</div>
-            <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;">Processing in browser...</div>
-          </div>
-        </div>
-        <span style="color: #2563eb; font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;"><iconify-icon icon="ph:spinner-gap-bold" class="spin" width="14"></iconify-icon> Processing</span>
+    // Create table rows
+    const rowMap = new Map();
+    fileQueue.forEach((f, idx) => {
+      const tr = document.createElement('tr');
+      const isVid = /\.(mp4|mov|webm)$/i.test(f.name);
+      tr.innerHTML = `
+        <td><canvas width="48" height="48" style="border-radius: var(--r-xs); background: var(--bg-3); width: 48px; height: 48px; object-fit: cover;"></canvas></td>
+        <td style="font-weight: 500; color: var(--text-1); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${f.name}</td>
+        <td><span class="queue-type">${isVid ? 'VIDEO' : 'IMAGE'}</span></td>
+        <td class="num text-xs text-3">${(f.size / 1024 / 1024).toFixed(2)} MB</td>
+        <td><span class="chip chip-neutral" id="status-chip-${idx}">Waiting</span></td>
+        <td><button type="button" class="btn btn-ghost btn-sm hidden" id="btn-prev-${idx}">Preview</button></td>
       `;
-      filesList.appendChild(row);
+      filesList.appendChild(tr);
+      rowMap.set(idx, { tr, file: f, isVid });
+    });
+
+    // Process sequentially
+    for (let i = 0; i < total; i++) {
+      const { tr, file, isVid } = rowMap.get(i);
+      const chip = tr.querySelector(`#status-chip-${i}`);
+      const btnPrev = tr.querySelector(`#btn-prev-${i}`);
+      const thumbCanvas = tr.querySelector('canvas');
+
+      chip.className = 'chip chip-warning';
+      chip.textContent = 'Processing...';
+      if (statProcessing) statProcessing.textContent = `${total - i} pending`;
 
       try {
-        if (isImg && watermarkEngine) {
-          const origUrl = URL.createObjectURL(file);
-          const img = await new Promise((resolve, reject) => {
-            const el = new Image();
-            el.onload = () => resolve(el);
-            el.onerror = reject;
-            el.src = origUrl;
-          });
+        let cleanBlob = null;
+        let origUrl = URL.createObjectURL(file);
+        let cleanUrl = null;
 
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const activeBg = (Math.min(canvas.width, canvas.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-          const detected = detectWatermarkCandidate(imgData, canvas.width, canvas.height, activeBg);
-          const base = watermarkEngine.getWatermarkInfo(canvas.width, canvas.height);
-          
-          let settings = { gain: 1.0, offsetX: 0, offsetY: 0, sizeScale: 1.0 };
-          if (presetKey === 'classic') {
-            settings = { gain: 1.0, offsetX: 0, offsetY: 0, sizeScale: 1.0 };
-          } else if (presetKey === 'veo3') {
-            settings = { gain: 0.6, offsetX: -24, offsetY: -24, sizeScale: 1.0 };
-          } else if (detected) {
-            settings = {
-              gain: detected.gain,
-              offsetX: detected.offsetX,
-              offsetY: detected.offsetY,
-              sizeScale: detected.sizeScale
-            };
-          }
-
-          cleanFrame(activeBg, imgData, canvas.width, canvas.height, base, settings);
-          ctx.putImageData(imgData, 0, 0);
-
-          const cleanBlob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
-          const cleanUrl = URL.createObjectURL(cleanBlob);
-
-          zip.file(relPath.replace(/\.[^/.]+$/, "") + ".png", cleanBlob);
-          completed++;
-          if (statCompleted) statCompleted.textContent = completed;
-
-          row.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; flex: 1;">
-              <img src="${cleanUrl}" alt="${file.name}" style="width: 44px; height: 44px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #cbd5e1; flex-shrink: 0;" title="Click to preview" />
-              <div style="overflow: hidden; flex: 1;">
-                <div class="row-file-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #1e293b; cursor: pointer;" title="${file.name}">${file.name}</div>
-                <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;"><span style="color: #16a34a; font-weight: 600;">✓ Ready</span></div>
-              </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-              <button type="button" class="btn btn-secondary text-xs btn-preview-item" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                <iconify-icon icon="ph:eye-bold" width="14" style="color: #2563eb;"></iconify-icon>
-                <span>Preview</span>
-              </button>
-              <a href="${cleanUrl}" download="clean_${file.name.replace(/\.[^/.]+$/, '')}.png" class="btn btn-primary text-xs" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                <iconify-icon icon="ph:download-simple-bold" width="14"></iconify-icon>
-                <span>Download</span>
-              </a>
-            </div>
-          `;
-
-          const openPreview = (e) => {
-            e.preventDefault();
-            activeModalItem = { cleanUrl, origUrl, filename: file.name, mediaType: 'image' };
-            if (modalFilename) modalFilename.textContent = file.name;
-            if (btnModalDownload) {
-              btnModalDownload.href = cleanUrl;
-              btnModalDownload.download = 'clean_' + file.name.replace(/\.[^/.]+$/, '') + '.png';
-            }
-            if (btnModalShowClean && btnModalShowOrig) {
-              btnModalShowClean.classList.add('active');
-              btnModalShowOrig.classList.remove('active');
-            }
-            if (modalVidPreview) modalVidPreview.classList.add('hidden');
-            if (modalImgPreview) {
-              modalImgPreview.classList.remove('hidden');
-              modalImgPreview.src = cleanUrl;
-            }
-            if (document.getElementById('modal-compare-tabs')) {
-              document.getElementById('modal-compare-tabs').style.display = 'flex';
-            }
-            if (previewModal) previewModal.classList.remove('hidden');
-          };
-
-          const pBtn = row.querySelector('.btn-preview-item');
-          const pImg = row.querySelector('img');
-          const pTitle = row.querySelector('.row-file-title');
-          if (pBtn) pBtn.onclick = openPreview;
-          if (pImg) pImg.onclick = openPreview;
-          if (pTitle) pTitle.onclick = openPreview;
-        } else if (/\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(file.name)) {
-          if (!videoEngine) {
-            videoEngine = await VideoWatermarkEngine.create();
-          }
-          let videoSettings = null;
-          try {
-            const sampleFrame = await grabPreviewFrame(file);
-            if (sampleFrame) {
-              const detected = detectVideoWatermarkCandidate(sampleFrame.imageData, sampleFrame.width, sampleFrame.height, videoEngine.sparkleImage);
-              if (detected) {
-                videoSettings = {
-                  gain: detected.gain,
-                  offsetX: detected.offsetX,
-                  offsetY: detected.offsetY,
-                  sizeScale: detected.sizeScale
-                };
-              } else {
-                videoSettings = getAdaptiveVideoPreset(presetKey === 'classic' ? 'corner' : 'veo', sampleFrame.width, sampleFrame.height);
-              }
-            }
-          } catch (e) {
-            console.warn('Video frame preview extraction failed:', e);
-          }
-
-          if (!videoSettings) {
-            videoSettings = getAdaptiveVideoPreset(presetKey === 'classic' ? 'corner' : 'veo', 1280, 720);
-          }
-
+        if (isVid) {
+          // Exact same Video Watermark Engine!
           const res = await videoEngine.process(file, {
-            ...videoSettings,
-            onProgress: ({ progress }) => {
-              const badge = row.querySelector('span');
-              if (badge) {
-                badge.innerHTML = `<iconify-icon icon="ph:spinner-gap-bold" class="spin" width="14"></iconify-icon> ${Math.round(progress * 100)}%`;
-              }
-            }
+            preset: batchPreset,
+            gain: 0.6,
+            offsetX: -24,
+            offsetY: -24,
+            sizeScale: 1
+          });
+          cleanBlob = res.blob;
+          cleanUrl = res.url;
+        } else {
+          // Exact same Image Watermark Engine!
+          const bmp = await createImageBitmap(file);
+          const c = document.createElement('canvas');
+          c.width = bmp.width;
+          c.height = bmp.height;
+          const cx = c.getContext('2d', { willReadFrequently: true });
+          cx.drawImage(bmp, 0, 0);
+          const imgData = cx.getImageData(0, 0, bmp.width, bmp.height);
+          bmp.close();
+
+          const activeBg = (Math.min(c.width, c.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+          const detected = detectWatermarkCandidate(imgData, c.width, c.height, activeBg);
+          const base = watermarkEngine.getWatermarkInfo(c.width, c.height);
+
+          cleanFrame(activeBg, imgData, c.width, c.height, base, {
+            gain: detected.gain,
+            offsetX: detected.offsetX,
+            offsetY: detected.offsetY,
+            sizeScale: detected.sizeScale
           });
 
-          const cleanBlob = await fetch(res.url).then(r => r.blob());
-          const cleanUrl = res.url;
-          const origUrl = res.originalUrl;
+          cx.putImageData(imgData, 0, 0);
+          cleanBlob = await new Promise(r => c.toBlob(r, 'image/png'));
+          cleanUrl = URL.createObjectURL(cleanBlob);
 
-          zip.file(relPath.replace(/\.[^/.]+$/, "") + ".mp4", cleanBlob);
-          completed++;
-          if (statCompleted) statCompleted.textContent = completed;
+          // Draw thumbnail
+          thumbCanvas.getContext('2d').drawImage(c, 0, 0, 48, 48);
+        }
 
-          row.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; flex: 1;">
-              <div style="width: 44px; height: 44px; background: #ede9fe; color: #7c3aed; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; flex-shrink: 0;" title="Click to preview video"><iconify-icon icon="ph:video-camera-bold" width="22"></iconify-icon></div>
-              <div style="overflow: hidden; flex: 1;">
-                <div class="row-file-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #1e293b; cursor: pointer;" title="${file.name}">${file.name}</div>
-                <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;"><span style="color: #16a34a; font-weight: 600;">✓ Ready (MP4)</span></div>
-              </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-              <button type="button" class="btn btn-secondary text-xs btn-preview-item" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                <iconify-icon icon="ph:play-bold" width="14" style="color: #2563eb;"></iconify-icon>
-                <span>Play</span>
-              </button>
-              <a href="${cleanUrl}" download="clean_${file.name.replace(/\.[^/.]+$/, '')}.mp4" class="btn btn-primary text-xs" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                <iconify-icon icon="ph:download-simple-bold" width="14"></iconify-icon>
-                <span>Download</span>
-              </a>
-            </div>
-          `;
+        const outPath = file.webkitRelativePath || file.name;
+        zip.file(outPath, cleanBlob);
 
-          const openVidPreview = (e) => {
-            e.preventDefault();
-            activeModalItem = { cleanUrl, origUrl, filename: file.name, mediaType: 'video' };
-            if (modalFilename) modalFilename.textContent = file.name;
-            if (btnModalDownload) {
-              btnModalDownload.href = cleanUrl;
-              btnModalDownload.download = 'clean_' + file.name.replace(/\.[^/.]+$/, '') + '.mp4';
-            }
-            if (modalImgPreview) modalImgPreview.classList.add('hidden');
-            if (modalVidPreview) {
-              modalVidPreview.classList.remove('hidden');
-              modalVidPreview.src = cleanUrl;
-              modalVidPreview.play().catch(() => {});
-            }
-            if (document.getElementById('modal-compare-tabs')) {
-              document.getElementById('modal-compare-tabs').style.display = 'flex';
-            }
-            if (previewModal) previewModal.classList.remove('hidden');
-          };
+        chip.className = 'chip chip-success';
+        chip.textContent = 'Cleaned';
+        completed++;
+        if (statCompleted) statCompleted.textContent = `${completed} cleaned`;
 
-          const pBtn = row.querySelector('.btn-preview-item');
-          const pThumb = row.querySelector('div > div:first-child');
-          const pTitle = row.querySelector('.row-file-title');
-          if (pBtn) pBtn.onclick = openVidPreview;
-          if (pThumb) pThumb.onclick = openVidPreview;
-          if (pTitle) pTitle.onclick = openVidPreview;
-        } else {
-          failed++;
-          if (statFailed) statFailed.textContent = failed;
-          const badge = row.querySelector('span');
-          if (badge) {
-            badge.textContent = '✗ Unsupported format';
-            badge.style.color = '#dc2626';
+        btnPrev.classList.remove('hidden');
+        btnPrev.onclick = () => {
+          activeModalItem = { name: file.name, origUrl, cleanUrl, isVideo: isVid };
+          if (modalFilename) modalFilename.textContent = file.name;
+          if (isVid) {
+            modalImg.classList.add('hidden');
+            modalVid.classList.remove('hidden');
+            modalVid.src = cleanUrl;
+          } else {
+            modalVid.classList.add('hidden');
+            modalImg.classList.remove('hidden');
+            modalImg.src = cleanUrl;
           }
-        }
+          if (btnModalDownload) {
+            btnModalDownload.href = cleanUrl;
+            btnModalDownload.download = `unmark_${file.name}`;
+          }
+          previewModal?.classList.remove('hidden');
+        };
+
       } catch (err) {
-        console.error('File process failed:', file.name, err);
+        console.error(err);
+        chip.className = 'chip chip-danger';
+        chip.textContent = 'Failed';
         failed++;
-        if (statFailed) statFailed.textContent = failed;
-        const badge = row.querySelector('span');
-        if (badge) {
-          badge.textContent = '✗ Failed';
-          badge.style.color = '#dc2626';
-        }
+        if (statFailed) statFailed.textContent = `${failed} failed`;
       }
 
       const pct = Math.round(((i + 1) / total) * 100);
-      if (progressBar) progressBar.style.width = pct + '%';
-      if (progressPct) progressPct.textContent = pct + '%';
+      if (progressBar) progressBar.style.width = `${pct}%`;
     }
 
-    if (statProcessing) statProcessing.textContent = 0;
+    if (statProcessing) statProcessing.textContent = '0 pending';
 
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const zipUrl = URL.createObjectURL(zipBlob);
-    if (btnBatchDownload) {
-      btnBatchDownload.href = zipUrl;
-      btnBatchDownload.download = 'cleaned_gemini_batch.zip';
-      btnBatchDownload.classList.remove('hidden');
-    }
-    if (btnCleanAnother) btnCleanAnother.classList.remove('hidden');
-    if (statusHeading) {
-      statusHeading.textContent = '✓ Batch Completed Successfully!';
-      statusHeading.style.color = '#16a34a';
-    }
-  }
-
-  function startBatchTracking(jobId) {
-    let sse = null;
-    let pollTimer = null;
-
-    // Preview Modal Elements
-    const previewModal = document.getElementById('batch-preview-modal');
-    const modalFilename = document.getElementById('modal-filename');
-    const modalImgPreview = document.getElementById('modal-img-preview');
-    const modalVidPreview = document.getElementById('modal-vid-preview');
-    const btnModalDownload = document.getElementById('btn-modal-download');
-    const btnModalClose = document.getElementById('btn-modal-close');
-    const btnModalCloseFooter = document.getElementById('btn-modal-close-footer');
-    const btnModalShowClean = document.getElementById('btn-modal-show-clean');
-    const btnModalShowOrig = document.getElementById('btn-modal-show-orig');
-
-    let activeModalItem = null;
-
-    function closeModal() {
-      if (previewModal) previewModal.classList.add('hidden');
-      if (modalVidPreview) {
-        modalVidPreview.pause();
-        modalVidPreview.src = '';
-      }
-      activeModalItem = null;
-    }
-
-    if (btnModalClose) btnModalClose.onclick = closeModal;
-    if (btnModalCloseFooter) btnModalCloseFooter.onclick = closeModal;
-    if (previewModal) {
-      previewModal.onclick = (e) => {
-        if (e.target === previewModal) closeModal();
-      };
-    }
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && previewModal && !previewModal.classList.contains('hidden')) {
-        closeModal();
-      }
-    });
-
-    if (btnModalShowClean && btnModalShowOrig) {
-      btnModalShowClean.onclick = () => {
-        btnModalShowClean.classList.add('active');
-        btnModalShowOrig.classList.remove('active');
-        if (activeModalItem) {
-          const isVideo = activeModalItem.mediaType === 'video' || /\.(mp4|mov|webm|mkv|avi)$/i.test(activeModalItem.filename || '');
-          if (!isVideo && modalImgPreview) {
-            modalImgPreview.src = activeModalItem.cleanUrl;
-          } else if (isVideo && modalVidPreview) {
-            modalVidPreview.src = activeModalItem.cleanUrl;
-            modalVidPreview.play().catch(() => {});
-          }
-        }
-      };
-      btnModalShowOrig.onclick = () => {
-        btnModalShowOrig.classList.add('active');
-        btnModalShowClean.classList.remove('active');
-        if (activeModalItem) {
-          const isVideo = activeModalItem.mediaType === 'video' || /\.(mp4|mov|webm|mkv|avi)$/i.test(activeModalItem.filename || '');
-          if (!isVideo && modalImgPreview) {
-            modalImgPreview.src = activeModalItem.origUrl;
-          } else if (isVideo && modalVidPreview) {
-            modalVidPreview.src = activeModalItem.origUrl;
-            modalVidPreview.play().catch(() => {});
-          }
-        }
-      };
-    }
-
-    function openModalForFile(jobId, f) {
-      activeModalItem = {
-        cleanUrl: `/api/v1/jobs/${jobId}/preview/${f.id}`,
-        origUrl: `/api/v1/jobs/${jobId}/original/${f.id}`,
-        filename: f.original_filename,
-        mediaType: f.media_type
-      };
-
-      if (modalFilename) modalFilename.textContent = f.original_filename;
-      if (btnModalDownload) {
-        btnModalDownload.href = `/api/v1/jobs/${jobId}/preview/${f.id}?download=1`;
-        btnModalDownload.download = f.original_filename;
-      }
-
-      if (btnModalShowClean && btnModalShowOrig) {
-        btnModalShowClean.classList.add('active');
-        btnModalShowOrig.classList.remove('active');
-      }
-
-      const isVid = f.media_type === 'video' || /\.(mp4|mov|webm|mkv|avi)$/i.test(f.original_filename);
-      if (isVid) {
-        if (modalImgPreview) modalImgPreview.classList.add('hidden');
-        if (modalVidPreview) {
-          modalVidPreview.classList.remove('hidden');
-          modalVidPreview.src = activeModalItem.cleanUrl;
-        }
-        if (document.getElementById('modal-compare-tabs')) {
-          document.getElementById('modal-compare-tabs').style.display = 'flex';
-        }
-      } else {
-        if (modalVidPreview) {
-          modalVidPreview.classList.add('hidden');
-          modalVidPreview.pause();
-        }
-        if (modalImgPreview) {
-          modalImgPreview.classList.remove('hidden');
-          modalImgPreview.src = activeModalItem.cleanUrl;
-        }
-        if (document.getElementById('modal-compare-tabs')) {
-          document.getElementById('modal-compare-tabs').style.display = 'flex';
-        }
-      }
-
-      if (previewModal) previewModal.classList.remove('hidden');
-    }
-
-    function renderJob(job) {
-      if (!job) return;
-      const progress = job.progress || {};
-      const pct = Math.round(progress.percent || 0);
-      if (progressBar) progressBar.style.width = pct + '%';
-      if (progressPct) progressPct.textContent = pct + '%';
-
-      if (statTotal) statTotal.textContent = progress.total || 0;
-      if (statCompleted) statCompleted.textContent = progress.completed || 0;
-      if (statProcessing) statProcessing.textContent = progress.processing || 0;
-      if (statFailed) statFailed.textContent = progress.failed || 0;
-
-      if (filesList) {
-        filesList.innerHTML = '';
-        (job.files || []).forEach((f) => {
-          const row = document.createElement('div');
-          row.style.cssText =
-            'display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.85rem; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.85rem; gap: 0.75rem; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03); transition: border-color 0.2s;';
-
-          const isImg = f.media_type === 'image' || /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(f.original_filename);
-          const isDone = f.status === 'COMPLETED';
-
-          let thumbHtml = '';
-          if (isDone) {
-            if (isImg) {
-              thumbHtml = `<img src="/api/v1/jobs/${job.job_id}/preview/${f.id}" alt="${f.original_filename}" style="width: 44px; height: 44px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #cbd5e1; flex-shrink: 0;" title="Click to view preview full size" />`;
-            } else {
-              thumbHtml = `<div style="width: 44px; height: 44px; background: #ede9fe; color: #7c3aed; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; flex-shrink: 0;" title="Click to preview video"><iconify-icon icon="ph:video-camera-bold" width="22"></iconify-icon></div>`;
-            }
-          } else {
-            thumbHtml = `<div style="width: 44px; height: 44px; background: #f1f5f9; color: #94a3b8; display: flex; align-items: center; justify-content: center; border-radius: 6px; flex-shrink: 0;"><iconify-icon icon="${isImg ? 'ph:image-bold' : 'ph:video-bold'}" width="20"></iconify-icon></div>`;
-          }
-
-          let statusHtml = '';
-          if (isDone) {
-            statusHtml = `
-              <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-                <button type="button" class="btn btn-secondary text-xs btn-preview-item" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                  <iconify-icon icon="ph:eye-bold" width="14" style="color: #2563eb;"></iconify-icon>
-                  <span>Preview</span>
-                </button>
-                <a href="/api/v1/jobs/${job.job_id}/preview/${f.id}?download=1" download="${f.original_filename}" class="btn btn-primary text-xs" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
-                  <iconify-icon icon="ph:download-simple-bold" width="14"></iconify-icon>
-                  <span>Download</span>
-                </a>
-              </div>
-            `;
-          } else if (f.status === 'PROCESSING') {
-            statusHtml = `<span style="color: #2563eb; font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;"><iconify-icon icon="ph:spinner-gap-bold" class="spin" width="14"></iconify-icon> ${f.status_text || 'Processing...'}</span>`;
-          } else if (f.status === 'FAILED') {
-            statusHtml = `<span style="color: #dc2626; font-weight: 700; font-size: 0.8rem;" title="${f.error_message || ''}">✗ Failed</span>`;
-          } else {
-            statusHtml = '<span style="color: #94a3b8; font-size: 0.8rem;">Queued</span>';
-          }
-
-          row.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; flex: 1;">
-              ${thumbHtml}
-              <div style="overflow: hidden; flex: 1;">
-                <div class="row-file-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #1e293b; cursor: ${isDone ? 'pointer' : 'default'};" title="${f.original_filename}">${f.original_filename}</div>
-                <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;">
-                  ${isDone ? '<span style="color: #16a34a; font-weight: 600;">✓ Ready</span>' : (f.status === 'PROCESSING' ? 'In progress' : 'Waiting in queue')}
-                  ${f.processing_time_ms ? ` • ${(f.processing_time_ms/1000).toFixed(1)}s` : ''}
-                </div>
-              </div>
-            </div>
-            ${statusHtml}
-          `;
-
-          if (isDone) {
-            const btnPreview = row.querySelector('.btn-preview-item');
-            const imgThumb = row.querySelector('img, div[style*="cursor: pointer"]');
-            const fileTitle = row.querySelector('.row-file-title');
-
-            const handlePreviewClick = (e) => {
-              e.preventDefault();
-              openModalForFile(job.job_id, f);
-            };
-
-            if (btnPreview) btnPreview.onclick = handlePreviewClick;
-            if (imgThumb) imgThumb.onclick = handlePreviewClick;
-            if (fileTitle) fileTitle.onclick = handlePreviewClick;
-          }
-
-          filesList.appendChild(row);
-        });
-      }
-
-      if (job.status === 'COMPLETED') {
-        if (sse) sse.close();
-        if (pollTimer) clearInterval(pollTimer);
-        if (statusHeading) {
-          statusHeading.textContent = '✓ Batch Completed Successfully!';
-          statusHeading.style.color = '#16a34a';
-        }
-        if (btnBatchDownload) {
-          btnBatchDownload.href = `/api/v1/jobs/${job.job_id}/download`;
-          btnBatchDownload.classList.remove('hidden');
-        }
-        if (btnCleanAnother) {
-          btnCleanAnother.classList.remove('hidden');
-        }
-      } else if (job.status === 'FAILED') {
-        if (sse) sse.close();
-        if (pollTimer) clearInterval(pollTimer);
-        if (statusHeading) {
-          statusHeading.textContent = '✗ Batch Failed';
-          statusHeading.style.color = '#dc2626';
-        }
-        if (btnCleanAnother) {
-          btnCleanAnother.classList.remove('hidden');
-        }
-      }
-    }
-
+    // Generate ZIP
     try {
-      sse = new EventSource(`/api/v1/jobs/${jobId}/events`);
-      sse.onmessage = (e) => {
-        try {
-          renderJob(JSON.parse(e.data));
-        } catch { }
-      };
-      sse.onerror = () => {
-        if (sse) sse.close();
-      };
-    } catch { }
-
-    pollTimer = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/v1/jobs/${jobId}`);
-        if (r.ok) renderJob(await r.json());
-      } catch { }
-    }, 1000);
-
-    fetch(`/api/v1/jobs/${jobId}`).then(async (r) => {
-      if (r.ok) renderJob(await r.json());
-    }).catch(() => { });
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipUrl = URL.createObjectURL(zipBlob);
+      if (btnBatchDownload) {
+        btnBatchDownload.href = zipUrl;
+        btnBatchDownload.download = 'unmark_batch_cleaned.zip';
+        btnBatchDownload.classList.remove('hidden');
+      }
+      showToast(`Batch completed: ${completed} files cleaned successfully!`, 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Error generating ZIP: ' + err.message, 'danger');
+    }
   }
+}
+
+// ── 6. Global Keyboard Shortcuts ──
+function initShortcuts() {
+  window.addEventListener('keydown', (e) => {
+    // Avoid triggering when focused in an input
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+
+    if (e.key === '1') {
+      e.preventDefault();
+      window.switchTab?.('image', true);
+    } else if (e.key === '2') {
+      e.preventDefault();
+      window.switchTab?.('video', true);
+    } else if (e.key === '3') {
+      e.preventDefault();
+      window.switchTab?.('batch', true);
+    } else if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      if (currentTab === 'image') document.getElementById('img-input')?.click();
+      else if (currentTab === 'video') document.getElementById('video-input')?.click();
+      else if (currentTab === 'batch') document.getElementById('batch-folder-input')?.click();
+    } else if (e.key === ' ') {
+      if (currentTab === 'video') {
+        e.preventDefault();
+        document.getElementById('btn-video-play')?.click();
+      }
+    } else if (e.key === ',') {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        document.getElementById('btn-open-settings')?.click();
+      } else if (currentTab === 'video') {
+        e.preventDefault();
+        document.getElementById('btn-video-step-back')?.click();
+      }
+    } else if (e.key === '.') {
+      if (currentTab === 'video') {
+        e.preventDefault();
+        document.getElementById('btn-video-step-forward')?.click();
+      }
+    } else if (e.key === 'z' || e.key === 'Z') {
+      if (currentTab === 'image') {
+        e.preventDefault();
+        document.getElementById('btn-toggle-loupe')?.click();
+      }
+    } else if (e.key === 'c' || e.key === 'C') {
+      if (currentTab === 'image') {
+        e.preventDefault();
+        document.getElementById('btn-toggle-split')?.click();
+      }
+    } else if (e.key === 'r' || e.key === 'R') {
+      if (currentTab === 'image') {
+        e.preventDefault();
+        document.getElementById('btn-img-reset-sliders')?.click();
+      } else if (currentTab === 'video') {
+        e.preventDefault();
+        document.getElementById('btn-video-reset-sliders')?.click();
+      }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      if (currentTab === 'image') document.getElementById('btn-img-export')?.click();
+      else if (currentTab === 'video') document.getElementById('btn-video-export')?.click();
+      else if (currentTab === 'batch') document.getElementById('btn-batch-download')?.click();
+    } else if (e.key === '?') {
+      e.preventDefault();
+      document.getElementById('btn-open-shortcuts')?.click();
+    }
+  });
 }
