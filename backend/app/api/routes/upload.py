@@ -78,9 +78,11 @@ async def create_and_upload_job(
             for item in files:
                 if not item.filename:
                     continue
-                # Some browsers send relative paths in filename or headers
-                clean_name = Path(item.filename).name
-                dest = input_dir / clean_name
+                # Handle relative paths safely for folder uploads
+                raw_path = Path(item.filename.replace("\\", "/"))
+                safe_parts = [p for p in raw_path.parts if p not in ("..", ".", "/", "\\", "")]
+                dest = input_dir.joinpath(*safe_parts)
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 with open(dest, "wb") as buffer:
                     shutil.copyfileobj(item.file, buffer)
 

@@ -9,7 +9,7 @@ import numpy as np
 
 from .base import BaseMediaProcessor
 from .alpha_maps.alpha_loader import AlphaMapCache
-from .watermark_math import detect_watermark_box, remove_watermark_numpy, PRESETS
+from .watermark_math import detect_watermark_box, detect_all_watermarks, remove_watermark_numpy, PRESETS
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 
@@ -27,9 +27,7 @@ class VideoProcessor(BaseMediaProcessor):
     ):
         self.alpha_cache = alpha_cache
         self.preset = preset.lower() if preset else "veo3"
-        preset_cfg = PRESETS.get(self.preset, PRESETS.get("veo3", PRESETS["auto"]))
-
-        self.gain = gain if (gain is not None and gain > 0) else preset_cfg.get("gain", 0.85)
+        self.custom_gain = gain if (gain is not None and gain > 0) else None
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.size_scale = size_scale
@@ -97,26 +95,80 @@ class VideoProcessor(BaseMediaProcessor):
         total_frames = info["total_frames"]
         has_audio = info["has_audio"]
 
-        box = detect_watermark_box(
-            width=width,
-            height=height,
-            preset=self.preset,
-            offset_x=self.offset_x,
-            offset_y=self.offset_y,
-            size_scale=self.size_scale,
-        )
-        alpha = self.alpha_cache.get(box.size)
-
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
             temp_video = tmp / "temp_processed.mp4"
             audio_track = tmp / "audio.aac"
+            sample_frame_path = tmp / "sample_frame.png"
 
-            # 1. Extract audio if present
+            # 1. Sample frame for watermark detection & gain calibration
+            sample_frame = None
+            dur = info["duration"]
+            test_times = [
+                min(1.0, max(0.1, dur * 0.1)) if dur > 0 else 0.5,
+                dur * 0.35 if dur > 1.5 else 0.5,
+                dur * 0.70 if dur > 2.5 else 0.5,
+            ]
+            for st_time in test_times:
+                sample_cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{st_time:.2f}",
+                    "-i", str(input_path),
+                    "-vframes", "1",
+                    "-f", "image2",
+                    "-pix_fmt", "rgb24",
+                    str(sample_frame_path)
+                ]
+                subprocess.run(sample_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if sample_frame_path.exists():
+                    try:
+                        from PIL import Image
+                        sf = np.array(Image.open(sample_frame_path).convert("RGB"))
+                        if sf.var() > 10.0:
+                            sample_frame = sf
+                            break
+                        if sample_frame is None:
+                            sample_frame = sf
+                    except Exception:
+                        pass
+
+            if sample_frame is not None:
+                boxes = detect_all_watermarks(sample_frame, self.alpha_cache)
+                if self.offset_x != 0 or self.offset_y != 0 or self.size_scale != 1.0:
+                    for b in boxes:
+                        b.x = max(0, min(width - b.size, b.x + self.offset_x))
+                        b.y = max(0, min(height - b.size, b.y + self.offset_y))
+                        b.size = max(8, min(round(b.size * self.size_scale), min(width, height)))
+            else:
+                # Video default fallback: Veo 3 / Adaptive Video Inset (never classic corner for video)
+                fallback_preset = "veo3" if self.preset == "auto" else self.preset
+                box = detect_watermark_box(
+                    width=width,
+                    height=height,
+                    preset=fallback_preset,
+                    offset_x=self.offset_x,
+                    offset_y=self.offset_y,
+                    size_scale=self.size_scale,
+                    alpha_cache=self.alpha_cache,
+                )
+                boxes = [box]
+
+            boxes_to_clean = []
+            for b in boxes:
+                eff_gain = self.custom_gain if self.custom_gain is not None else b.detected_gain
+                alpha = self.alpha_cache.get(b.size)
+                boxes_to_clean.append((b.x, b.y, alpha, eff_gain, b))
+
+            if progress_cb and boxes:
+                primary = boxes[0]
+                primary_gain = boxes_to_clean[0][3]
+                progress_cb(10.0, f"Alpha unblending ({primary.layout_name} at x={primary.x}, y={primary.y}, size={primary.size}, gain={primary_gain:.2f}x)")
+
+            # 2. Extract audio if present
             audio_extracted = False
             if has_audio:
                 if progress_cb:
-                    progress_cb(8.0, "Extracting audio track")
+                    progress_cb(12.0, "Extracting audio track")
                 extract_cmd = [
                     "ffmpeg", "-y",
                     "-i", str(input_path),
@@ -128,7 +180,7 @@ class VideoProcessor(BaseMediaProcessor):
                 res = subprocess.run(extract_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 audio_extracted = (res.returncode == 0 and audio_track.exists() and audio_track.stat().st_size > 0)
 
-            # 2. Setup decoder process (reading raw RGB frames)
+            # 3. Setup decoder process (reading raw RGB frames)
             decode_cmd = [
                 "ffmpeg",
                 "-i", str(input_path),
@@ -139,7 +191,7 @@ class VideoProcessor(BaseMediaProcessor):
             ]
             decoder = subprocess.Popen(decode_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-            # 3. Setup encoder process (writing processed RGB frames to H.264)
+            # 4. Setup encoder process (writing processed RGB frames to H.264)
             encode_cmd = [
                 "ffmpeg", "-y",
                 "-f", "rawvideo",
@@ -168,13 +220,15 @@ class VideoProcessor(BaseMediaProcessor):
 
                     frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((height, width, 3))
 
-                    cleaned_frame = remove_watermark_numpy(
-                        image=frame,
-                        alpha_map=alpha,
-                        x=box.x,
-                        y=box.y,
-                        gain=self.gain,
-                    )
+                    cleaned_frame = frame
+                    for bx, by, b_alpha, b_gain, _ in boxes_to_clean:
+                        cleaned_frame = remove_watermark_numpy(
+                            image=cleaned_frame,
+                            alpha_map=b_alpha,
+                            x=bx,
+                            y=by,
+                            gain=b_gain,
+                        )
 
                     encoder.stdin.write(cleaned_frame.tobytes())
                     frame_idx += 1

@@ -69,42 +69,15 @@ const ALPHA_THRESHOLD = 0.002;
 const MAX_ALPHA = 0.99;
 const LOGO_VALUE = 255;
 
-function applySmartTouchup(imageData, width, height, position, alphaMap, gain) {
-  if (gain >= 0.88) return; // Full-res clean images do not require compression touch-up
-  const { x, y, width: w, height: h } = position;
-  const copy = new Uint8ClampedArray(imageData.data);
-
-  for (let row = 1; row < h - 1; row++) {
-    for (let col = 1; col < w - 1; col++) {
-      const alphaIdx = row * w + col;
-      const a = alphaMap[alphaIdx] * gain;
-      if (a < 0.08) continue;
-
-      const imgIdx = ((y + row) * width + (x + col)) * 4;
-      const weight = Math.min(0.55, Math.pow(a, 0.8) * 0.55);
-
-      for (let c = 0; c < 3; c++) {
-        // 3x3 edge-preserving neighborhood smoothing
-        let sum = 0;
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            const nIdx = ((y + row + dr) * width + (x + col + dc)) * 4 + c;
-            sum += copy[nIdx];
-          }
-        }
-        const smoothVal = sum / 9.0;
-        imageData.data[imgIdx + c] = Math.round(imageData.data[imgIdx + c] * (1.0 - weight) + smoothVal * weight);
-      }
-    }
-  }
-}
-
 function removeWatermark(imageData, alphaMap, position, options = {}) {
   const { x, y, width, height } = position;
   const gain = Number.isFinite(options.alphaGain) && options.alphaGain > 0
     ? options.alphaGain
     : 1;
 
+  // Pure Mathematical Alpha Unblending:
+  // Original = (Watermarked - alpha * 255) / (1 - alpha)
+  // Zero inpainting, zero blur, 100% texture preservation.
   for (let row = 0; row < height; row++) {
     for (let col = 0; col < width; col++) {
       const imgIdx = ((y + row) * imageData.width + (x + col)) * 4;
@@ -121,9 +94,6 @@ function removeWatermark(imageData, alphaMap, position, options = {}) {
       }
     }
   }
-
-  // Recheck & Touch-up pass for residual compression ringing
-  applySmartTouchup(imageData, imageData.width, imageData.height, position, alphaMap, gain);
 }
 
 function getWatermarkInfo(width, height) {
@@ -812,8 +782,27 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
   const baseRatio = minDim / 1536;
   const base = getWatermarkInfo(width, height);
 
-  // Candidate Layout Families with Bayesian Priors:
+  // Calibrated reference anchors from standard Gemini test images:
+  // - Small images (<1000px, e.g. 1376x768): right=73px, bottom=73px, size=48px
+  // - Large images (>=1000px, e.g. 2752x1536, 3200x1344): right=64px, bottom=64px, size=96px
+  const isSmall = minDim < 1000;
+  const primaryAnchor = isSmall
+    ? { marginR: 73, marginB: 73, size: 48, name: 'Calibrated Anchor (73px margin, 48px)' }
+    : { marginR: 64, marginB: 64, size: 96, name: 'Calibrated Anchor (64px margin, 96px)' };
+
+  // Candidate Layout Families with Bayesian Priors (Primary Anchor checked first):
   const layoutFamilies = [
+    {
+      presetKey: 'classic',
+      name: primaryAnchor.name,
+      baseSize: primaryAnchor.size,
+      calcPos: (s) => ({
+        x: Math.max(0, width - primaryAnchor.marginR - s),
+        y: Math.max(0, height - primaryAnchor.marginB - s)
+      }),
+      gain: isSmall ? 0.6 : 1.0,
+      prior: 2.0
+    },
     // 1. Gemini & Nano Banana Adaptive Inset (12.5% Inset)
     {
       presetKey: 'new',
@@ -879,7 +868,8 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
     for (const scale of scalePyramid) {
       const s = Math.max(16, Math.min(Math.round(layout.baseSize * scale), Math.min(width, height) - 8));
       const pos = layout.calcPos(s);
-      const { score } = evaluateCandidateMatch(imageData, width, height, bgImg, { x: pos.x, y: pos.y, size: s });
+      const { score, variance } = evaluateCandidateMatch(imageData, width, height, bgImg, { x: pos.x, y: pos.y, size: s });
+      if (variance < 6.0) continue; // reject flat patches
       const weightedScore = score * (layout.prior || 1.0);
 
       if (weightedScore > bestScore) {
@@ -896,6 +886,35 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
     }
   }
 
+  // Full Quadrant Scan across bottom-right (catches arbitrary insets, widescreen ratios, crops)
+  const scanMinX = Math.max(0, Math.round(width * 0.65));
+  const scanMinY = Math.max(0, Math.round(height * 0.70));
+  const expectedSize = base.size;
+  const scanSizes = [Math.round(expectedSize * 0.85), expectedSize, Math.round(expectedSize * 1.15)]
+    .map(s => Math.max(16, Math.min(s, Math.min(width, height) - 8)));
+  const uniqueScanSizes = [...new Set(scanSizes)];
+  const gridStep = Math.max(8, Math.round(expectedSize / 5));
+
+  for (const s of uniqueScanSizes) {
+    for (let sy = scanMinY; sy <= height - s - 4; sy += gridStep) {
+      for (let sx = scanMinX; sx <= width - s - 4; sx += gridStep) {
+        const { score, variance } = evaluateCandidateMatch(imageData, width, height, bgImg, { x: sx, y: sy, size: s });
+        if (variance < 6.0) continue;
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = {
+            layout: layoutFamilies[0],
+            size: s,
+            scale: s / base.size,
+            x: sx,
+            y: sy,
+            score
+          };
+        }
+      }
+    }
+  }
+
   // Refinement: Joint 2D Position (±16px) and Scale fine-tuning (±10%)
   if (bestMatch && bestMatch.score > 0.05) {
     let refinedX = bestMatch.x;
@@ -904,18 +923,19 @@ function detectWatermarkCandidate(imageData, width, height, bgImg) {
     let refinedScore = bestMatch.score;
 
     const fineSizes = [
-      Math.max(16, Math.round(bestMatch.size * 0.92)),
+      Math.max(16, Math.round(bestMatch.size * 0.94)),
       bestMatch.size,
-      Math.min(Math.min(width, height) - 8, Math.round(bestMatch.size * 1.08))
+      Math.min(Math.min(width, height) - 8, Math.round(bestMatch.size * 1.06))
     ];
     const uniqueSizes = [...new Set(fineSizes)];
 
     for (const testSize of uniqueSizes) {
-      for (let dy = -16; dy <= 16; dy += 4) {
-        for (let dx = -16; dx <= 16; dx += 4) {
+      for (let dy = -20; dy <= 20; dy += 2) {
+        for (let dx = -20; dx <= 20; dx += 2) {
           const testX = Math.max(0, Math.min(width - testSize, bestMatch.x + dx));
           const testY = Math.max(0, Math.min(height - testSize, bestMatch.y + dy));
-          const { score } = evaluateCandidateMatch(imageData, width, height, bgImg, { x: testX, y: testY, size: testSize });
+          const { score, variance } = evaluateCandidateMatch(imageData, width, height, bgImg, { x: testX, y: testY, size: testSize });
+          if (variance < 6.0) continue;
           const weightedScore = score * (bestMatch.layout.prior || 1.0);
 
           if (weightedScore > refinedScore) {
@@ -1460,7 +1480,8 @@ function initImageRemover() {
     offscreen.height = height;
 
     const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-    const { wm, roi } = cleanFrame(watermarkEngine.bg96, copy, width, height, currentBase, currentSettings);
+    const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+    const { wm, roi } = cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
     offscreen.getContext('2d').putImageData(copy, 0, 0);
 
     const maxW = 360;
@@ -1558,7 +1579,8 @@ function initImageRemover() {
       currentOriginalBitmap = await createImageBitmap(currentPreviewFrame.imageData);
 
       // Run Auto-Detection
-      currentDetected = detectWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, watermarkEngine.bg96);
+      const activeBg = (Math.min(currentPreviewFrame.width, currentPreviewFrame.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+      currentDetected = detectWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, activeBg);
 
       tunerContainer.classList.remove('hidden');
       applyAutoSettings();
@@ -1601,7 +1623,8 @@ function initImageRemover() {
     try {
       const { width, height, imageData } = currentPreviewFrame;
       const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-      cleanFrame(watermarkEngine.bg96, copy, width, height, currentBase, currentSettings);
+      const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+      cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -1838,12 +1861,24 @@ function initVideoRemover() {
     e.preventDefault();
     dropzone.classList.remove('drag-over');
     if (isProcessing) return;
-    if (e.dataTransfer.files.length) handleVideoFile(e.dataTransfer.files[0]);
+    const droppedFiles = Array.from(e.dataTransfer?.files || []);
+    if (droppedFiles.length > 1) {
+      if (typeof switchTab === 'function') switchTab('batch', true);
+      if (typeof startBatchProcess === 'function') startBatchProcess(droppedFiles);
+    } else if (droppedFiles.length === 1) {
+      handleVideoFile(droppedFiles[0]);
+    }
   };
 
   fileInput.onchange = (e) => {
     if (isProcessing) return;
-    if (e.target.files.length) handleVideoFile(e.target.files[0]);
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length > 1) {
+      if (typeof switchTab === 'function') switchTab('batch', true);
+      if (typeof startBatchProcess === 'function') startBatchProcess(selectedFiles);
+    } else if (selectedFiles.length === 1) {
+      handleVideoFile(selectedFiles[0]);
+    }
     fileInput.value = '';
   };
 
@@ -2650,7 +2685,8 @@ function initBatch() {
           ctx.drawImage(img, 0, 0);
 
           const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const detected = detectWatermarkCandidate(imgData, canvas.width, canvas.height, watermarkEngine.bg96);
+          const activeBg = (Math.min(canvas.width, canvas.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
+          const detected = detectWatermarkCandidate(imgData, canvas.width, canvas.height, activeBg);
           const base = watermarkEngine.getWatermarkInfo(canvas.width, canvas.height);
           
           let settings = { gain: 1.0, offsetX: 0, offsetY: 0, sizeScale: 1.0 };
@@ -2667,7 +2703,7 @@ function initBatch() {
             };
           }
 
-          cleanFrame(watermarkEngine.bg96, imgData, canvas.width, canvas.height, base, settings);
+          cleanFrame(activeBg, imgData, canvas.width, canvas.height, base, settings);
           ctx.putImageData(imgData, 0, 0);
 
           const cleanBlob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
@@ -2726,12 +2762,108 @@ function initBatch() {
           if (pBtn) pBtn.onclick = openPreview;
           if (pImg) pImg.onclick = openPreview;
           if (pTitle) pTitle.onclick = openPreview;
+        } else if (/\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(file.name)) {
+          if (!videoEngine) {
+            videoEngine = await VideoWatermarkEngine.create();
+          }
+          let videoSettings = { gain: 0.6, offsetX: -24, offsetY: -24, sizeScale: 1.0 };
+          try {
+            const sampleFrame = await grabPreviewFrame(file);
+            if (sampleFrame) {
+              const detected = detectVideoWatermarkCandidate(sampleFrame.imageData, sampleFrame.width, sampleFrame.height, videoEngine.sparkleImage);
+              if (detected) {
+                videoSettings = {
+                  gain: detected.gain,
+                  offsetX: detected.offsetX,
+                  offsetY: detected.offsetY,
+                  sizeScale: detected.sizeScale
+                };
+              }
+            }
+          } catch (e) {
+            console.warn('Video frame preview extraction failed:', e);
+          }
+
+          if (presetKey === 'classic') {
+            videoSettings.offsetX = 0;
+            videoSettings.offsetY = 0;
+            videoSettings.gain = 1.0;
+          } else if (presetKey === 'veo3') {
+            videoSettings.gain = 0.6;
+            videoSettings.offsetX = -24;
+            videoSettings.offsetY = -24;
+          }
+
+          const res = await videoEngine.process(file, {
+            ...videoSettings,
+            onProgress: ({ progress }) => {
+              const badge = row.querySelector('span');
+              if (badge) {
+                badge.innerHTML = `<iconify-icon icon="ph:spinner-gap-bold" class="spin" width="14"></iconify-icon> ${Math.round(progress * 100)}%`;
+              }
+            }
+          });
+
+          const cleanBlob = await fetch(res.url).then(r => r.blob());
+          const cleanUrl = res.url;
+          const origUrl = res.originalUrl;
+
+          zip.file(relPath.replace(/\.[^/.]+$/, "") + ".mp4", cleanBlob);
+          completed++;
+          if (statCompleted) statCompleted.textContent = completed;
+
+          row.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; flex: 1;">
+              <div style="width: 44px; height: 44px; background: #ede9fe; color: #7c3aed; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; flex-shrink: 0;" title="Click to preview video"><iconify-icon icon="ph:video-camera-bold" width="22"></iconify-icon></div>
+              <div style="overflow: hidden; flex: 1;">
+                <div class="row-file-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #1e293b; cursor: pointer;" title="${file.name}">${file.name}</div>
+                <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;"><span style="color: #16a34a; font-weight: 600;">✓ Ready (MP4)</span></div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+              <button type="button" class="btn btn-secondary text-xs btn-preview-item" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
+                <iconify-icon icon="ph:play-bold" width="14" style="color: #2563eb;"></iconify-icon>
+                <span>Play</span>
+              </button>
+              <a href="${cleanUrl}" download="clean_${file.name.replace(/\.[^/.]+$/, '')}.mp4" class="btn btn-primary text-xs" style="padding: 5px 10px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px;">
+                <iconify-icon icon="ph:download-simple-bold" width="14"></iconify-icon>
+                <span>Download</span>
+              </a>
+            </div>
+          `;
+
+          const openVidPreview = (e) => {
+            e.preventDefault();
+            activeModalItem = { cleanUrl, origUrl, filename: file.name, mediaType: 'video' };
+            if (modalFilename) modalFilename.textContent = file.name;
+            if (btnModalDownload) {
+              btnModalDownload.href = cleanUrl;
+              btnModalDownload.download = 'clean_' + file.name.replace(/\.[^/.]+$/, '') + '.mp4';
+            }
+            if (modalImgPreview) modalImgPreview.classList.add('hidden');
+            if (modalVidPreview) {
+              modalVidPreview.classList.remove('hidden');
+              modalVidPreview.src = cleanUrl;
+              modalVidPreview.play().catch(() => {});
+            }
+            if (document.getElementById('modal-compare-tabs')) {
+              document.getElementById('modal-compare-tabs').style.display = 'flex';
+            }
+            if (previewModal) previewModal.classList.remove('hidden');
+          };
+
+          const pBtn = row.querySelector('.btn-preview-item');
+          const pThumb = row.querySelector('div > div:first-child');
+          const pTitle = row.querySelector('.row-file-title');
+          if (pBtn) pBtn.onclick = openVidPreview;
+          if (pThumb) pThumb.onclick = openVidPreview;
+          if (pTitle) pTitle.onclick = openVidPreview;
         } else {
           failed++;
           if (statFailed) statFailed.textContent = failed;
           const badge = row.querySelector('span');
           if (badge) {
-            badge.textContent = '✗ Skipped';
+            badge.textContent = '✗ Unsupported format';
             badge.style.color = '#dc2626';
           }
         }
@@ -2810,15 +2942,27 @@ function initBatch() {
       btnModalShowClean.onclick = () => {
         btnModalShowClean.classList.add('active');
         btnModalShowOrig.classList.remove('active');
-        if (activeModalItem && modalImgPreview) {
-          modalImgPreview.src = activeModalItem.cleanUrl;
+        if (activeModalItem) {
+          const isVideo = activeModalItem.mediaType === 'video' || /\.(mp4|mov|webm|mkv|avi)$/i.test(activeModalItem.filename || '');
+          if (!isVideo && modalImgPreview) {
+            modalImgPreview.src = activeModalItem.cleanUrl;
+          } else if (isVideo && modalVidPreview) {
+            modalVidPreview.src = activeModalItem.cleanUrl;
+            modalVidPreview.play().catch(() => {});
+          }
         }
       };
       btnModalShowOrig.onclick = () => {
         btnModalShowOrig.classList.add('active');
         btnModalShowClean.classList.remove('active');
-        if (activeModalItem && modalImgPreview) {
-          modalImgPreview.src = activeModalItem.origUrl;
+        if (activeModalItem) {
+          const isVideo = activeModalItem.mediaType === 'video' || /\.(mp4|mov|webm|mkv|avi)$/i.test(activeModalItem.filename || '');
+          if (!isVideo && modalImgPreview) {
+            modalImgPreview.src = activeModalItem.origUrl;
+          } else if (isVideo && modalVidPreview) {
+            modalVidPreview.src = activeModalItem.origUrl;
+            modalVidPreview.play().catch(() => {});
+          }
         }
       };
     }
@@ -2850,7 +2994,7 @@ function initBatch() {
           modalVidPreview.src = activeModalItem.cleanUrl;
         }
         if (document.getElementById('modal-compare-tabs')) {
-          document.getElementById('modal-compare-tabs').style.display = 'none';
+          document.getElementById('modal-compare-tabs').style.display = 'flex';
         }
       } else {
         if (modalVidPreview) {

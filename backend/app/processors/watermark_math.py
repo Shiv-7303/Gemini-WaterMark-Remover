@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 import numpy as np
 import cv2
 from .alpha_maps.alpha_loader import AlphaMapCache
@@ -80,7 +80,8 @@ def find_optimal_gain(
     best_score = float("inf")
 
     # Evaluate candidate gains
-    for g in [0.40, 0.45, 0.50, 0.55, 0.57, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00]:
+    candidate_gains = [0.35, 0.40, 0.45, 0.48, 0.50, 0.52, 0.55, 0.57, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00]
+    for g in candidate_gains:
         cleaned = remove_watermark_numpy(img_rgb, alpha, x, y, gain=g)
         roi_gray = cv2.cvtColor(cleaned[y:y_end, x:x_end, :3], cv2.COLOR_RGB2GRAY)
         res = cv2.matchTemplate(roi_gray, tmpl, cv2.TM_CCOEFF_NORMED)
@@ -97,124 +98,171 @@ def recheck_and_refine_watermark(
     x: int,
     y: int,
     gain: float,
-    residual_score: float = 0.0
+    residual_score: float = 0.0,
+    is_dark: bool = False
 ) -> np.ndarray:
     """
-    Automated Recheck & Smart Touch-Up Pass.
-    After mathematical unblending, checks whether any residual compression ringing
-    or faint edge artifacts remain. If so, applies a subtle edge-preserving refinement
-    strictly on the watermark alpha mask, preserving 100% of underlying real scene detail.
+    Pure Mathematical Alpha Unblending - Zero inpainting, zero blur, zero quality loss.
+    Restores original scene pixels using exact mathematical formula:
+        Original = (Watermarked - alpha * 255.0) / (1.0 - alpha)
+    No blur, no smearing, 100% texture preservation on grass, curbs, water, and tracks.
     """
-    cleaned = remove_watermark_numpy(image, alpha_map, x, y, gain=gain)
+    return remove_watermark_numpy(image, alpha_map, x, y, gain=gain)
 
-    h_map, w_map = alpha_map.shape[:2]
-    h_img, w_img = image.shape[:2]
-    x_end = min(w_img, x + w_map)
-    y_end = min(h_img, y + h_map)
+def get_preset_anchors(width: int, height: int) -> List[Tuple[str, int, int, int]]:
+    """
+    Returns calibrated 5 preset candidate locations (name, exp_x, exp_y, size)
+    ordered by highest priority first:
+      - 768p / Small Images (<1000px min_dim, e.g. 1376x768):
+          1. Calibrated Gemini 768p Inset: margin_right=73, margin_bottom=73, size=48 (x=w-121, y=h-121)
+          2. Adaptive Inset (12.5%): margin=round(192*ratio), size=48
+          3. Classic Corner (4.16%): margin=round(64*ratio), size=48
+          4. Fixed Standard Inset: margin=96, size=48
+          5. Veo Video Inset: margin=round(min_dim/10)+24, size=48
+      - Full-Resolution Images (>=1000px min_dim, e.g. 2752x1536, 3200x1344, 2528x1696):
+          1. Calibrated Gemini Full-Res Inset: margin_right=64, margin_bottom=64, size=96 (x=w-160, y=h-160)
+          2. Adaptive Inset (12.5%): margin=round(192*ratio), size=96
+          3. Classic Corner (4.16%): margin=round(64*ratio), size=96
+          4. Fixed Standard Inset: margin=192, size=96
+          5. Veo Video Inset: margin=round(min_dim/10)+24, size=96
+    """
+    min_dim = min(width, height)
+    ratio = min_dim / 1536.0
 
-    if x_end <= x or y_end <= y:
-        return cleaned
+    if min_dim < 1000:
+        sz = 48
+        return [
+            ("Calibrated 768p Inset", width - 73 - sz, height - 73 - sz, sz),
+            ("Gemini Adaptive Inset", int(width - round(192 * ratio) - sz), int(height - round(192 * ratio) - sz), sz),
+            ("Classic Corner", int(width - round(64 * ratio) - sz), int(height - round(64 * ratio) - sz), sz),
+            ("Fixed Standard Inset", width - 96 - sz, height - 96 - sz, sz),
+            ("Veo Video Inset", int(width - round(min_dim / 10.0) - sz - 24), int(height - round(min_dim / 10.0) - sz - 24), sz),
+        ]
+    else:
+        sz = 96
+        return [
+            ("Calibrated Full-Res Inset", width - 64 - sz, height - 64 - sz, sz),
+            ("Gemini Adaptive Inset", int(width - round(192 * ratio) - sz), int(height - round(192 * ratio) - sz), sz),
+            ("Classic Corner", int(width - round(64 * ratio) - sz), int(height - round(64 * ratio) - sz), sz),
+            ("Fixed Standard Inset", width - 192 - sz, height - 192 - sz, sz),
+            ("Veo Video Inset", int(width - round(min_dim / 10.0) - sz - 24), int(height - round(min_dim / 10.0) - sz - 24), sz),
+        ]
 
-    roi_cleaned = cleaned[y:y_end, x:x_end, :3]
-    crop_alpha = alpha_map[:y_end - y, :x_end - x]
-
-    # Recheck condition: if residual score is detectable (>0.015) or gain < 0.85 (indicates compressed JPEG)
-    if residual_score > 0.015 or gain < 0.85:
-        smoothed = cv2.edgePreservingFilter(roi_cleaned, flags=1, sigma_s=6, sigma_r=0.15)
-        # Weight by alpha mask so only watermark pixels receive subtle touch-up
-        alpha_weight = (np.clip(crop_alpha * gain, 0.0, 1.0)[..., np.newaxis]) ** 0.8
-        blended = (roi_cleaned * (1.0 - 0.55 * alpha_weight) + smoothed * (0.55 * alpha_weight)).astype(np.uint8)
-        cleaned[y:y_end, x:x_end, :3] = blended
-
-    return cleaned
-
-def detect_watermark_candidate(
+def detect_all_watermarks(
     img_rgb: np.ndarray,
     alpha_cache: Optional[AlphaMapCache] = None,
-) -> WatermarkBox:
+) -> List[WatermarkBox]:
     """
-    High-precision Normalized Cross-Correlation and Dynamic Gain Estimator.
-    Works accurately across full-resolution, cropped, or WhatsApp-resized Gemini images.
+    Priority-Based Preset Detection:
+    1. First checks the known preset locations in a tight window (+/- 2px).
+       If template correlation >= 0.25, immediately confirms and determines
+       the exact optimal gain that minimizes residual correlation.
+    2. If no preset matches, falls back to general quadrant search in bottom-right corner.
+    3. If still not detected, falls back to default preset coordinates.
     """
     if alpha_cache is None:
         alpha_cache = AlphaMapCache()
 
     h, w = img_rgb.shape[:2]
     min_dim = min(w, h)
-    base_ratio = min_dim / 1536.0
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
-    # Search in bottom-right region (bottom 38% and right 38% of image)
-    roi_y0 = int(h * 0.62)
-    roi_x0 = int(w * 0.62)
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-    search_roi = gray[roi_y0:, roi_x0:]
+    presets = get_preset_anchors(w, h)
 
-    # Dynamic size bounds based on expected watermark scale
-    expected_size = max(24, int(round(96.0 * base_ratio)))
-    min_size = max(24, int(round(expected_size * 0.70)))
-    max_size = min(int(round(expected_size * 1.35)), min(h - roi_y0 - 4, w - roi_x0 - 4))
+    # === STAGE 1: Check Known Presets FIRST in a Focused Window (+/- 20px) ===
+    pad = 20
+    best_preset_match = None
+    best_preset_conf = -1.0
 
-    best_val = -1.0
-    best_loc = (max(0, w - int(round(64 * base_ratio)) - int(round(96 * base_ratio))),
-                max(0, h - int(round(64 * base_ratio)) - int(round(96 * base_ratio))))
-    best_size = expected_size
+    for name, exp_x, exp_y, sz in presets:
+        alpha = (alpha_cache.get(sz) * 255.0).astype(np.float32)
+        y0 = max(0, exp_y - pad)
+        y1 = min(h, exp_y + sz + pad)
+        x0 = max(0, exp_x - pad)
+        x1 = min(w, exp_x + sz + pad)
 
-    # Step 1: Multi-scale template matching across sizes
-    step = 2 if (max_size - min_size) <= 30 else 4
-    for s in range(min_size, max_size + 1, step):
-        if search_roi.shape[0] < s or search_roi.shape[1] < s:
+        roi = gray[y0:y1, x0:x1]
+        if roi.shape[0] < sz or roi.shape[1] < sz:
             continue
-        tmpl = (alpha_cache.get(s) * 255.0).astype(np.uint8)
-        res = cv2.matchTemplate(search_roi, tmpl, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-        if max_val > best_val:
-            best_val = max_val
-            best_size = s
-            best_loc = (roi_x0 + max_loc[0], roi_y0 + max_loc[1])
 
-    # Step 2: Fine-tune size in ±2px
-    if best_val > 0.35:
-        for s in [best_size - 2, best_size, best_size + 2]:
-            if s < min_size or s > max_size or search_roi.shape[0] < s or search_roi.shape[1] < s:
-                continue
-            tmpl = (alpha_cache.get(s) * 255.0).astype(np.uint8)
-            res = cv2.matchTemplate(search_roi, tmpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            if max_val > best_val:
-                best_val = max_val
-                best_size = s
-                best_loc = (roi_x0 + max_loc[0], roi_y0 + max_loc[1])
+        res = cv2.matchTemplate(roi, alpha, cv2.TM_CCOEFF_NORMED)
+        min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
 
-    x, y = best_loc
-    size = best_size
+        if max_v > best_preset_conf:
+            best_preset_conf = max_v
+            actual_x = x0 + max_l[0]
+            actual_y = y0 + max_l[1]
+            best_preset_match = (name, actual_x, actual_y, sz, max_v)
 
-    # Step 3: Compute optimal gain if match is confident
-    if best_val >= 0.25:
-        optimal_gain, residual_score = find_optimal_gain(img_rgb, x, y, size, alpha_cache)
-        return WatermarkBox(
-            x=int(x),
-            y=int(y),
-            size=int(size),
-            confidence=float(best_val),
-            detected_gain=float(optimal_gain),
-            residual_score=float(residual_score),
-            layout_name=f"Auto Sparkle ({size}px, {optimal_gain:.2f}x gain)"
-        )
+    if best_preset_match is not None and best_preset_conf >= 0.28:
+        name, actual_x, actual_y, sz, conf = best_preset_match
+        gain, res_score = find_optimal_gain(img_rgb, actual_x, actual_y, sz, alpha_cache)
+        return [WatermarkBox(
+            x=actual_x,
+            y=actual_y,
+            size=sz,
+            confidence=conf,
+            detected_gain=gain,
+            residual_score=res_score,
+            layout_name=f"{name} ({sz}px, {gain:.2f}x gain)"
+        )]
 
-    # Fallback to Classic Corner
-    base_size = max(16, round(96.0 * base_ratio))
-    base_margin = max(8, round(64.0 * base_ratio))
-    base_x = max(0, w - base_margin - base_size)
-    base_y = max(0, h - base_margin - base_size)
-    return WatermarkBox(
-        x=int(base_x),
-        y=int(base_y),
-        size=int(base_size),
-        confidence=float(max(0.0, best_val)),
-        detected_gain=1.0,
+    # === STAGE 2: Fallback to General Quadrant Search ===
+    roi_y0 = int(round(h * 0.70))
+    roi_x0 = int(round(w * 0.65))
+    search_roi = gray[roi_y0:, roi_x0:]
+    rh, rw = search_roi.shape
+
+    target_size = 48 if min_dim < 1000 else 96
+    search_sizes = [target_size, 48 if target_size == 96 else 96]
+
+    best_fb_score = -1.0
+    best_fb_loc = None
+    best_fb_s = target_size
+
+    for s in search_sizes:
+        if rh < s or rw < s:
+            continue
+        alpha = (alpha_cache.get(s) * 255.0).astype(np.float32)
+        res = cv2.matchTemplate(search_roi, alpha, cv2.TM_CCOEFF_NORMED)
+        _, max_v, _, max_l = cv2.minMaxLoc(res)
+        if max_v > best_fb_score:
+            best_fb_score = max_v
+            best_fb_s = s
+            best_fb_loc = (roi_x0 + max_l[0], roi_y0 + max_l[1])
+
+    if best_fb_loc is not None and best_fb_score >= 0.28:
+        bx, by = best_fb_loc
+        gain, res_score = find_optimal_gain(img_rgb, bx, by, best_fb_s, alpha_cache)
+        return [WatermarkBox(
+            x=bx,
+            y=by,
+            size=best_fb_s,
+            confidence=best_fb_score,
+            detected_gain=gain,
+            residual_score=res_score,
+            layout_name=f"Auto Sparkle ({best_fb_s}px, {gain:.2f}x gain)"
+        )]
+
+    # === STAGE 3: Default Fallback to Primary Calibrated Preset ===
+    exp_name, exp_x, exp_y, exp_sz = presets[0]
+    return [WatermarkBox(
+        x=max(0, exp_x),
+        y=max(0, exp_y),
+        size=exp_sz,
+        confidence=0.0,
+        detected_gain=0.60 if min_dim < 1000 else 1.00,
         residual_score=0.0,
-        layout_name="Classic Corner (Fallback)"
-    )
+        layout_name=f"Fallback {exp_name} ({exp_sz}px)"
+    )]
+
+def detect_watermark_candidate(
+    img_rgb: np.ndarray,
+    alpha_cache: Optional[AlphaMapCache] = None,
+) -> WatermarkBox:
+    """Returns the primary detected watermark candidate."""
+    boxes = detect_all_watermarks(img_rgb, alpha_cache)
+    return boxes[0]
 
 def detect_watermark_box(
     width: int,
