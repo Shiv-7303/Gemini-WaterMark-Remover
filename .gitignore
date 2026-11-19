@@ -13,6 +13,10 @@ data/
 # Temporary test images & archives
 *.zip
 testing images/
+test image 2/
+test 3/
+backend/temp/
+storage/
 cleaned_*.png
 recheck_*.png
 tests/fixtures/cleaned_*.png
