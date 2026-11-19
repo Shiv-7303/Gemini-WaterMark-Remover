@@ -2528,6 +2528,41 @@ function initBatch() {
     if (optionsCard) optionsCard.classList.add('hidden');
     if (statusCard) statusCard.classList.remove('hidden');
 
+    const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
+    
+    // If ZIP is uploaded, inspect and unpack client-side if it contains videos
+    if (isSingleZip && window.JSZip && typeof VideoWatermarkEngine !== 'undefined' && VideoWatermarkEngine.isSupported()) {
+      try {
+        const zipData = await JSZip.loadAsync(files[0]);
+        const entries = Object.keys(zipData.files);
+        const hasVidInZip = entries.some(e => /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(e));
+        if (hasVidInZip) {
+          const extractedFiles = [];
+          for (const [path, entry] of Object.entries(zipData.files)) {
+            if (entry.dir) continue;
+            const blob = await entry.async('blob');
+            const fname = path.split('/').pop();
+            const f = new File([blob], fname, { type: blob.type });
+            Object.defineProperty(f, 'webkitRelativePath', { value: path });
+            extractedFiles.push(f);
+          }
+          if (extractedFiles.length > 0) {
+            await processBatchClientSide(extractedFiles, batchPreset);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not inspect zip client-side, falling back to server:', err);
+      }
+    }
+
+    const hasVideo = files.some(f => /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(f.name));
+    // When video files are uploaded in Batch, use the EXACT same Video Remover client-side engine!
+    if (hasVideo && typeof VideoWatermarkEngine !== 'undefined' && VideoWatermarkEngine.isSupported()) {
+      await processBatchClientSide(files, batchPreset);
+      return;
+    }
+
     if (statusHeading) {
       statusHeading.textContent = `Uploading ${files.length} file(s)...`;
       statusHeading.style.color = '#0f172a';
@@ -2543,7 +2578,6 @@ function initBatch() {
     if (filesList) filesList.innerHTML = '<div style="padding: 1.5rem; text-align: center; color: #64748b; font-size: 0.85rem;"><iconify-icon icon="ph:spinner-gap-bold" class="spin" width="20"></iconify-icon><div style="margin-top: 6px;">Uploading files to server...</div></div>';
 
     const formData = new FormData();
-    const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
     if (isSingleZip) {
       formData.append('file', files[0]);
     } else {
@@ -2766,7 +2800,7 @@ function initBatch() {
           if (!videoEngine) {
             videoEngine = await VideoWatermarkEngine.create();
           }
-          let videoSettings = { gain: 0.6, offsetX: -24, offsetY: -24, sizeScale: 1.0 };
+          let videoSettings = null;
           try {
             const sampleFrame = await grabPreviewFrame(file);
             if (sampleFrame) {
@@ -2778,20 +2812,16 @@ function initBatch() {
                   offsetY: detected.offsetY,
                   sizeScale: detected.sizeScale
                 };
+              } else {
+                videoSettings = getAdaptiveVideoPreset(presetKey === 'classic' ? 'corner' : 'veo', sampleFrame.width, sampleFrame.height);
               }
             }
           } catch (e) {
             console.warn('Video frame preview extraction failed:', e);
           }
 
-          if (presetKey === 'classic') {
-            videoSettings.offsetX = 0;
-            videoSettings.offsetY = 0;
-            videoSettings.gain = 1.0;
-          } else if (presetKey === 'veo3') {
-            videoSettings.gain = 0.6;
-            videoSettings.offsetX = -24;
-            videoSettings.offsetY = -24;
+          if (!videoSettings) {
+            videoSettings = getAdaptiveVideoPreset(presetKey === 'classic' ? 'corner' : 'veo', 1280, 720);
           }
 
           const res = await videoEngine.process(file, {
