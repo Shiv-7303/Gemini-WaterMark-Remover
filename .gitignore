@@ -22,6 +22,17 @@ recheck_*.png
 tests/fixtures/cleaned_*.png
 tests/fixtures/test_*.png
 tests/*.png
+tests/*.jpg
+tests/*.txt
+tests/test_*.py
+tests/check_*.py
+tests/analyze_*.py
+tests/eval_*.py
+tests/export_*.py
+tests/find_*.py
+tests/inspect_*.py
+tests/verify_*.py
+tests/compare_*.py
 current_landing_*.png
 diagrams.html
 workspace_elements.html
