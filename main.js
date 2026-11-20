@@ -486,8 +486,9 @@ class VideoWatermarkEngine {
 }
 
 // ── 4. App Controller & Event Handlers ──
-// Global instances reused from lines 489-491
-currentTab = 'image';
+var currentTab = 'image';
+var watermarkEngine = null;
+var videoEngine = null;
 
 const IMG_PRESETS = {
   new: { gain: 0.6, offsetX: -128, offsetY: -128, sizeScale: 1 },
@@ -1120,1323 +1121,1874 @@ function detectVideoWatermarkCandidate(imageData, width, height, bgImg) {
 }
 
 
+
+
 // ═════════════════════════════════════════════════════════════════════════
-// UNMARK — Minimalist Darkroom UI Controller
-// Specification Version 1.0 (Dark Theme Only, Zero Inpainting/Blur)
+// UNMARK — UI Design Specification v2 Controller (Light, Colorful, Alive)
+// Full-Featured Implementation: Dissolve, Compare, Loupe, Video, Batch, ZIP
 // ═════════════════════════════════════════════════════════════════════════
 
-// Global instances reused from lines 489-491
-currentTab = 'image';
+(function () {
+  'use strict';
 
-// ── Toast Notifications ──
-function showToast(message, type = 'info', duration = 3000) {
-  const shelf = document.getElementById('toast-shelf');
-  if (!shelf) return;
-  const toast = document.createElement('div');
-  toast.className = `toast ${type === 'success' ? 'chip-success' : type === 'danger' ? 'chip-danger' : ''}`;
-  let icon = 'ph:info-bold';
-  if (type === 'success') icon = 'ph:check-circle-bold';
-  if (type === 'danger') icon = 'ph:warning-circle-bold';
-  toast.innerHTML = `<iconify-icon icon="${icon}" width="16"></iconify-icon><span>${message}</span>`;
-  shelf.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
-    toast.style.transition = 'all 240ms ease';
-    setTimeout(() => toast.remove(), 250);
-  }, duration);
-}
+  // Global Engine & State
+  var watermarkEngine = null;
+  var videoEngine = null;
+  var currentTab = 'image';
 
-// ── Smooth Scroll Helper ──
-function smoothScrollTo(element, offset = 75) {
-  if (!element) return;
-  setTimeout(() => {
-    const rect = element.getBoundingClientRect();
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-    const targetY = rect.top + scrollTop - offset;
-    window.scrollTo({
-      top: Math.max(0, targetY),
-      behavior: 'smooth'
-    });
-  }, 100);
-}
+  var currentImageFile = null;
+  var imageSessionFiles = [];
+  var activeImageIndex = 0;
+  var currentCandidate = null;
 
-// ── Initialize App ──
-function init() {
-  initTabs();
-  initOverlays();
-  initImageRemover();
-  initVideoRemover();
-  initBatch();
-  initShortcuts();
-  checkEngineHealth();
-}
+  // Video State
+  var currentVideoFile = null;
+  var videoElement = null;
+  var videoDuration = 0;
+  var videoFps = 24;
+  var videoPlaying = false;
+  var videoSpeed = 1.0;
+  var videoCandidate = null;
+  var isCleaningVideo = false;
+  var lastCompletedVideoBlob = null;
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+  // Batch State
+  var batchQueue = [];
+  var batchRunning = false;
+  var batchPaused = false;
+  var batchActiveCount = 0;
 
-// ── 1. Tab / Mode Controller ──
-function initTabs() {
+  // UI Interactive State
+  var comparePos = 50;
+  var compareMode = 'slider';
+  var isDraggingCompare = false;
+  var loupeActive = false;
+  var holdingOriginal = false;
+  var undoStack = [];
+
+  // Settings
+  var appSettings = {
+    outputFormat: 'png',
+    suffix: '_cleaned',
+    concurrency: 2,
+    checkAllCorners: false,
+    engine: 'browser'
+  };
+
+  const DISSOLVE_COLORS = ['#0f172a', '#2563eb', '#38bdf8', '#10b981', '#f59e0b'];
+
+  // DOM Cache
+  const app = document.getElementById('app');
+  const landingHero = document.getElementById('landing-hero');
+  const dropzone = document.getElementById('dropzone');
+  const demoShowcase = document.getElementById('demo-showcase');
+  const dropTitle = document.getElementById('drop-title');
+  const dropSub = document.getElementById('drop-sub');
+  const chooseImgBtn = document.getElementById('choose-img-btn');
+  const chooseVideoBtn = document.getElementById('choose-video-btn');
+  const batchEmptyBtns = document.getElementById('batch-empty-btns');
+
+  // Hidden Inputs
+  const imageInput = document.getElementById('image-input');
+  const videoInput = document.getElementById('video-input');
+  const batchFileInput = document.getElementById('batch-file-input');
+  const batchFolderInput = document.getElementById('batch-folder-input');
+  const batchZipInput = document.getElementById('batch-zip-input');
+
+  // Workspaces
+  const viewImage = document.getElementById('view-image');
+  const viewVideo = document.getElementById('view-video');
+  const viewBatch = document.getElementById('view-batch');
+
+  // Tabs
   const tabImage = document.getElementById('tab-image');
   const tabVideo = document.getElementById('tab-video');
   const tabBatch = document.getElementById('tab-batch');
-  const panelImage = document.getElementById('panel-image');
-  const panelVideo = document.getElementById('panel-video');
-  const panelBatch = document.getElementById('panel-batch');
-  const inspectorImage = document.getElementById('inspector-image');
-  const inspectorVideo = document.getElementById('inspector-video');
-  const inspectorBatch = document.getElementById('inspector-batch');
+  const tabsContainer = document.querySelector('.tabs');
 
-  function switchTab(target, updateHash = false) {
-    currentTab = target;
-    try { sessionStorage.setItem('activeTab', target); } catch (e) { }
+  // Canvases
+  const canvasClean = document.getElementById('canvas-clean');
+  const canvasOrig = document.getElementById('canvas-orig');
+  const canvasSideOrig = document.getElementById('canvas-side-orig');
+  const canvasSideClean = document.getElementById('canvas-side-clean');
+  const canvasFlip = document.getElementById('canvas-flip');
+  const flipBadge = document.getElementById('flip-badge');
 
-    if (tabImage) tabImage.classList.toggle('active', target === 'image');
-    if (tabVideo) tabVideo.classList.toggle('active', target === 'video');
-    if (tabBatch) tabBatch.classList.toggle('active', target === 'batch');
+  // Compare & Loupe
+  const compareBox = document.getElementById('compare-box');
+  const compareLine = document.getElementById('compare-line');
+  const sideBySideBox = document.getElementById('side-by-side-box');
+  const flipBox = document.getElementById('flip-box');
+  const imageLoupe = document.getElementById('image-loupe');
+  const loupeCanvas = document.getElementById('loupe-canvas');
+  const particlesLayer = document.getElementById('particles-layer');
 
-    if (panelImage) {
-      panelImage.style.display = target === 'image' ? 'block' : 'none';
-      panelImage.classList.toggle('hidden', target !== 'image');
-    }
-    if (panelVideo) {
-      panelVideo.style.display = target === 'video' ? 'block' : 'none';
-      panelVideo.classList.toggle('hidden', target !== 'video');
-    }
-    if (panelBatch) {
-      panelBatch.style.display = target === 'batch' ? 'block' : 'none';
-      panelBatch.classList.toggle('hidden', target !== 'batch');
-    }
+  // Sliders & Steppers
+  const sliderImgGain = document.getElementById('slider-img-gain');
+  const sliderImgScale = document.getElementById('slider-img-scale');
+  const lblImgGain = document.getElementById('lbl-img-gain');
+  const lblImgScale = document.getElementById('lbl-img-scale');
+  const lblImgX = document.getElementById('lbl-img-x');
+  const lblImgY = document.getElementById('lbl-img-y');
+  const btnImgUndo = document.getElementById('btn-img-undo');
+  const btnImgReset = document.getElementById('btn-img-reset');
 
-    if (inspectorImage) inspectorImage.classList.toggle('hidden', target !== 'image');
-    if (inspectorVideo) inspectorVideo.classList.toggle('hidden', target !== 'video');
-    if (inspectorBatch) inspectorBatch.classList.toggle('hidden', target !== 'batch');
+  // Result & Ring
+  const resultTitle = document.getElementById('result-title');
+  const ringFillImg = document.getElementById('ring-fill-img');
+  const ringTextImg = document.getElementById('ring-text-img');
+  const lblMetaDims = document.getElementById('lbl-meta-dims');
+  const lblMetaFormat = document.getElementById('lbl-meta-format');
+  const lblMetaSize = document.getElementById('lbl-meta-size');
 
-    if (updateHash) {
-      try {
-        const hash = target === 'image' ? '' : '#' + target;
-        history.replaceState(null, '', window.location.pathname + window.location.search + hash);
-      } catch (e) { }
-    }
-  }
+  // Presets & Corner Toggle
+  const presetExpanderBtn = document.getElementById('preset-expander-btn');
+  const presetListBox = document.getElementById('preset-list-box');
+  const lblCurrentPreset = document.getElementById('lbl-current-preset');
+  const toggleCornersRow = document.getElementById('toggle-corners-row');
+  const toggleCorners = document.getElementById('toggle-corners');
 
-  window.switchTab = switchTab;
+  // Image Actions
+  const btnImgDownload = document.getElementById('btn-img-download');
+  const btnImgDownloadText = document.getElementById('btn-img-download-text');
+  const btnImgCopy = document.getElementById('btn-img-copy');
+  const btnImgCopyText = document.getElementById('btn-img-copy-text');
+  const filmstripList = document.getElementById('filmstrip-list');
+  const filmAddTile = document.getElementById('film-add-tile');
 
-  if (tabImage) tabImage.onclick = (e) => { e.preventDefault(); switchTab('image', true); };
-  if (tabVideo) tabVideo.onclick = (e) => { e.preventDefault(); switchTab('video', true); };
-  if (tabBatch) tabBatch.onclick = (e) => { e.preventDefault(); switchTab('batch', true); };
+  // Video View Elements
+  const videoCanvasPreview = document.getElementById('video-canvas-preview');
+  const btnVideoPlay = document.getElementById('btn-video-play');
+  const playIcon = document.getElementById('play-icon');
+  const videoTimeReadout = document.getElementById('video-time-readout');
+  const btnFramePrev = document.getElementById('btn-frame-prev');
+  const btnFrameNext = document.getElementById('btn-frame-next');
+  const btnSpeedToggle = document.getElementById('btn-speed-toggle');
+  const videoTimeline = document.getElementById('video-timeline');
+  const videoTimelinePlayed = document.getElementById('video-timeline-played');
+  const videoTimelineThumb = document.getElementById('video-timeline-thumb');
+  const videoFrameStrip = document.getElementById('video-frame-strip');
+  const videoFilename = document.getElementById('video-filename');
+  const lblVideoDims = document.getElementById('lbl-video-dims');
+  const lblVideoDur = document.getElementById('lbl-video-dur');
+  const lblVideoFps = document.getElementById('lbl-video-fps');
+  const vStep1 = document.getElementById('v-step-1');
+  const vStep2 = document.getElementById('v-step-2');
+  const vStep3 = document.getElementById('v-step-3');
+  const vStep1Desc = document.getElementById('v-step-1-desc');
+  const vStep2Desc = document.getElementById('v-step-2-desc');
+  const btnVideoClean = document.getElementById('btn-video-clean');
+  const videoProcessingCard = document.getElementById('video-processing-card');
+  const videoProcPct = document.getElementById('video-proc-pct');
+  const videoProcBar = document.getElementById('video-proc-bar');
+  const videoProcFrames = document.getElementById('video-proc-frames');
+  const videoProcEta = document.getElementById('video-proc-eta');
+  const btnVideoCancel = document.getElementById('btn-video-cancel');
+  const videoCompleteCard = document.getElementById('video-complete-card');
+  const btnVideoDownload = document.getElementById('btn-video-download');
+  const videoOutputSize = document.getElementById('video-output-size');
 
-  // URL hash check
-  const hash = (window.location.hash || '').toLowerCase();
-  if (hash === '#video' || hash === '#panel-video') {
-    switchTab('video');
-  } else if (hash === '#batch' || hash === '#panel-batch') {
-    switchTab('batch');
-  } else {
-    try {
-      const saved = sessionStorage.getItem('activeTab');
-      if (saved && (saved === 'image' || saved === 'video' || saved === 'batch')) {
-        switchTab(saved);
-      }
-    } catch (e) { }
-  }
+  // Batch View Elements
+  const bentoTotal = document.getElementById('bento-total');
+  const bentoCleaned = document.getElementById('bento-cleaned');
+  const bentoLook = document.getElementById('bento-look');
+  const bentoWaiting = document.getElementById('bento-waiting');
+  const batchOverallBar = document.getElementById('batch-overall-bar');
+  const batchAddMoreBtn = document.getElementById('batch-add-more-btn');
+  const batchClearBtn = document.getElementById('batch-clear-btn');
+  const batchStartBtn = document.getElementById('batch-start-btn');
+  const batchZipBtn = document.getElementById('batch-zip-btn');
+  const batchQueueList = document.getElementById('batch-queue-list');
 
-  window.addEventListener('hashchange', () => {
-    const h = (window.location.hash || '').toLowerCase();
-    if (h === '#video' || h === '#panel-video') switchTab('video');
-    else if (h === '#batch' || h === '#panel-batch') switchTab('batch');
-    else if (h === '#image' || h === '#panel-image') switchTab('image');
-  });
+  // Modals & Drawers
+  const engineBtn = document.getElementById('engine-btn');
+  const engineDot = document.getElementById('engine-dot');
+  const engineStatusText = document.getElementById('engine-status-text');
+  const enginePopover = document.getElementById('engine-popover');
+  const popCardBrowser = document.getElementById('pop-card-browser');
+  const popCardLocal = document.getElementById('pop-card-local');
+  const localEnginePingStatus = document.getElementById('local-engine-ping-status');
+  const btnTestEngine = document.getElementById('btn-test-engine');
 
-  document.querySelectorAll('a[href="#panel-video"], a[href="#video"]').forEach(link => {
-    link.addEventListener('click', (e) => { e.preventDefault(); switchTab('video', true); });
-  });
-  document.querySelectorAll('a[href="#panel-image"], a[href="#image"]').forEach(link => {
-    link.addEventListener('click', (e) => { e.preventDefault(); switchTab('image', true); });
-  });
-}
-
-// ── 2. Overlays Controller (Settings, Engine, Shortcuts) ──
-function initOverlays() {
-  const btnSettings = document.getElementById('btn-open-settings');
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsBackdrop = document.getElementById('settings-backdrop');
+  const settingsDrawer = document.getElementById('settings-drawer');
   const btnCloseSettings = document.getElementById('btn-close-settings');
-  const drawerSettings = document.getElementById('settings-drawer');
-  const backdropSettings = document.getElementById('settings-backdrop');
+  const settingImgFormat = document.getElementById('setting-img-format');
+  const settingSuffix = document.getElementById('setting-suffix');
+  const concurrencyDec = document.getElementById('concurrency-dec');
+  const concurrencyInc = document.getElementById('concurrency-inc');
+  const concurrencyVal = document.getElementById('concurrency-val');
+  const btnResetSettings = document.getElementById('btn-reset-settings');
 
-  const btnShortcuts = document.getElementById('btn-open-shortcuts');
-  const btnCloseShortcuts = document.getElementById('btn-close-shortcuts');
-  const modalShortcuts = document.getElementById('shortcuts-modal');
+  const modalBackdrop = document.getElementById('modal-backdrop');
+  const batchPreviewModal = document.getElementById('batch-preview-modal');
+  const modalFilename = document.getElementById('modal-filename');
+  const modalMeta = document.getElementById('modal-meta');
+  const modalBtnClean = document.getElementById('modal-btn-clean');
+  const modalBtnOrig = document.getElementById('modal-btn-orig');
+  const modalBtnClose = document.getElementById('modal-btn-close');
+  const modalBtnCloseFooter = document.getElementById('modal-btn-close-footer');
+  const modalImgPreview = document.getElementById('modal-img-preview');
+  const modalVidPreview = document.getElementById('modal-vid-preview');
+  const modalBtnDownload = document.getElementById('modal-btn-download');
 
-  const btnEngine = document.getElementById('btn-engine-status');
-  const popoverEngine = document.getElementById('engine-popover');
+  const toastShelf = document.getElementById('toast-shelf');
 
-  function openSettings() {
-    if (drawerSettings) drawerSettings.classList.remove('hidden');
-    if (backdropSettings) backdropSettings.classList.remove('hidden');
+  // Initialize Engines
+  async function ensureEngines() {
+    if (!watermarkEngine) {
+      watermarkEngine = await WatermarkEngine.create();
+    }
+    if (!videoEngine) {
+      videoEngine = new VideoWatermarkEngine(watermarkEngine);
+    }
+    return { watermarkEngine, videoEngine };
   }
-  function closeSettings() {
-    if (drawerSettings) drawerSettings.classList.add('hidden');
-    if (backdropSettings) backdropSettings.classList.add('hidden');
+
+  // Toast
+  function showToast(message, type = 'info', duration = 4000, actionLabel = null, actionCallback = null) {
+    if (!toastShelf) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+
+    let iconHtml = '<iconify-icon icon="ph:info-bold" width="16" style="color:var(--sky);"></iconify-icon>';
+    if (type === 'success') iconHtml = '<iconify-icon icon="ph:check-circle-bold" width="16" style="color:var(--mint);"></iconify-icon>';
+    if (type === 'warn') iconHtml = '<iconify-icon icon="ph:warning-circle-bold" width="16" style="color:var(--sun);"></iconify-icon>';
+    if (type === 'error') iconHtml = '<iconify-icon icon="ph:x-circle-bold" width="16" style="color:var(--danger);"></iconify-icon>';
+
+    toast.innerHTML = `${iconHtml}<span>${message}</span>`;
+
+    if (actionLabel && typeof actionCallback === 'function') {
+      const actBtn = document.createElement('button');
+      actBtn.className = 'btn btn-sm';
+      actBtn.style.cssText = 'background: rgba(255,255,255,0.18); color: #fff; margin-left: 8px;';
+      actBtn.textContent = actionLabel;
+      actBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        actionCallback();
+        toast.remove();
+      });
+      toast.appendChild(actBtn);
+    }
+
+    toastShelf.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(12px)';
+      toast.style.transition = 'all 240ms ease';
+      setTimeout(() => toast.remove(), 250);
+    }, duration);
   }
 
-  function openShortcuts() {
-    if (modalShortcuts) modalShortcuts.classList.remove('hidden');
-  }
-  function closeShortcuts() {
-    if (modalShortcuts) modalShortcuts.classList.add('hidden');
+  // Mode Switch
+  function setMode(mode) {
+    currentTab = mode;
+    app.dataset.mode = mode;
+
+    tabImage.setAttribute('aria-selected', mode === 'image');
+    tabVideo.setAttribute('aria-selected', mode === 'video');
+    tabBatch.setAttribute('aria-selected', mode === 'batch');
+
+    const tabIndex = mode === 'image' ? 0 : mode === 'video' ? 1 : 2;
+    tabsContainer.style.setProperty('--tab-index', tabIndex);
+
+    updateViewVisibility();
   }
 
-  btnSettings?.addEventListener('click', openSettings);
-  btnCloseSettings?.addEventListener('click', closeSettings);
-  backdropSettings?.addEventListener('click', closeSettings);
+  function updateViewVisibility() {
+    const hasImage = imageSessionFiles.length > 0;
+    const hasVideo = currentVideoFile !== null;
+    const hasBatch = batchQueue.length > 0;
+    const isShowingWorkspace = (currentTab === 'image' && hasImage) ||
+                               (currentTab === 'video' && hasVideo) ||
+                               (currentTab === 'batch' && hasBatch);
 
-  btnShortcuts?.addEventListener('click', openShortcuts);
-  btnCloseShortcuts?.addEventListener('click', closeShortcuts);
-  modalShortcuts?.addEventListener('click', (e) => {
-    if (e.target === modalShortcuts) closeShortcuts();
+    if (landingHero) landingHero.classList.toggle('hidden', isShowingWorkspace);
+    if (demoShowcase) demoShowcase.classList.toggle('hidden', isShowingWorkspace);
+
+    if (currentTab === 'image') {
+      if (hasImage) {
+        dropzone.classList.add('hidden');
+        viewImage.classList.remove('hidden');
+        viewVideo.classList.add('hidden');
+        viewBatch.classList.add('hidden');
+      } else {
+        dropzone.classList.remove('hidden');
+        viewImage.classList.add('hidden');
+        viewVideo.classList.add('hidden');
+        viewBatch.classList.add('hidden');
+        dropTitle.textContent = 'Drop an image, video or folder';
+        dropSub.textContent = '';
+        chooseImgBtn.classList.remove('hidden');
+        chooseVideoBtn.classList.add('hidden');
+        batchEmptyBtns.classList.add('hidden');
+      }
+    } else if (currentTab === 'video') {
+      if (hasVideo) {
+        dropzone.classList.add('hidden');
+        viewImage.classList.add('hidden');
+        viewVideo.classList.remove('hidden');
+        viewBatch.classList.add('hidden');
+      } else {
+        dropzone.classList.remove('hidden');
+        viewImage.classList.add('hidden');
+        viewVideo.classList.add('hidden');
+        viewBatch.classList.add('hidden');
+        dropTitle.textContent = 'Drop an image, video or folder';
+        dropSub.textContent = '';
+        chooseImgBtn.classList.add('hidden');
+        chooseVideoBtn.classList.remove('hidden');
+        batchEmptyBtns.classList.add('hidden');
+      }
+    } else if (currentTab === 'batch') {
+      if (hasBatch) {
+        dropzone.classList.add('hidden');
+        viewImage.classList.add('hidden');
+        viewVideo.classList.add('hidden');
+        viewBatch.classList.remove('hidden');
+      } else {
+        dropzone.classList.remove('hidden');
+        viewImage.classList.add('hidden');
+        viewVideo.classList.add('hidden');
+        viewBatch.classList.add('hidden');
+        dropTitle.textContent = 'Drop an image, video or folder';
+        dropSub.textContent = '';
+        chooseImgBtn.classList.add('hidden');
+        chooseVideoBtn.classList.add('hidden');
+        batchEmptyBtns.classList.remove('hidden');
+      }
+    }
+  }
+
+  tabImage.addEventListener('click', () => setMode('image'));
+  tabVideo.addEventListener('click', () => setMode('video'));
+  tabBatch.addEventListener('click', () => setMode('batch'));
+
+  // Dissolve Signature Moment
+  function triggerDissolve(layer, cx, cy) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!layer) return;
+
+    for (let i = 0; i < 12; i++) {
+      const el = document.createElement('i');
+      const sz = 6 + Math.random() * 6;
+      el.className = 'particle';
+      el.style.cssText = `left:${cx - sz / 2}px;top:${cy - sz / 2}px;--sz:${sz}px;--c:${DISSOLVE_COLORS[i % 5]};`;
+      layer.appendChild(el);
+
+      const a = Math.random() * Math.PI * 2;
+      const d = 28 + Math.random() * 44;
+      const dur = 520 + Math.random() * 200;
+
+      if (el.animate) {
+        el.animate(
+          [
+            { transform: 'translate(0,0) rotate(0deg) scale(1)', opacity: 1 },
+            { transform: `translate(${Math.cos(a) * d}px, ${Math.sin(a) * d}px) rotate(${Math.random() * 180}deg) scale(0.6)`, opacity: 0 }
+          ],
+          { duration: dur, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', delay: 80, fill: 'forwards' }
+        ).onfinish = () => el.remove();
+      } else {
+        setTimeout(() => el.remove(), 700);
+      }
+    }
+  }
+
+  function triggerRevealSweep() {
+    comparePos = 0;
+    setComparePos(0);
+    const start = performance.now();
+    const duration = 480;
+
+    function step(ts) {
+      const elapsed = ts - start;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = Math.sin((progress * Math.PI) / 2);
+      const pos = eased * 50;
+      setComparePos(pos);
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        setComparePos(50);
+        btnImgDownload.classList.add('btn-glow');
+        setTimeout(() => btnImgDownload.classList.remove('btn-glow'), 1000);
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // Confidence Meter & Ring
+  function updateConfidenceRing(pct) {
+    const cleanPct = Math.max(0, Math.min(100, Math.round(pct)));
+    const totalCircumference = 144.5;
+    const targetOffset = totalCircumference * (1 - cleanPct / 100);
+
+    if (ringTextImg) ringTextImg.textContent = cleanPct;
+    if (ringFillImg) {
+      ringFillImg.style.strokeDashoffset = targetOffset;
+      if (cleanPct >= 70) {
+        ringFillImg.setAttribute('stroke', 'var(--ok)');
+        resultTitle.textContent = 'Looks clean';
+      } else {
+        ringFillImg.setAttribute('stroke', 'var(--warn)');
+        resultTitle.textContent = 'Check this one';
+      }
+    }
+
+    const meterCells = document.querySelectorAll('#meter-cells .meter-cell');
+    const meterNum = document.getElementById('meter-num');
+    if (meterCells.length) {
+      const score = Math.max(1, Math.min(10, Math.round(cleanPct / 10)));
+      if (meterNum) meterNum.textContent = score;
+      meterCells.forEach((cell, idx) => {
+        cell.className = 'meter-cell';
+        if (idx < score) {
+          cell.classList.add('filled');
+          if (cleanPct < 70) cell.classList.add('warn');
+        }
+      });
+    }
+  }
+
+  // Compare Slider
+  function setComparePos(pct) {
+    comparePos = Math.min(98, Math.max(2, pct));
+    compareBox.style.setProperty('--pos', comparePos + '%');
+    compareBox.setAttribute('aria-valuenow', Math.round(comparePos));
+    compareBox.setAttribute('aria-valuetext', Math.round(comparePos) + ' percent original');
+  }
+
+  function handleComparePointer(clientX) {
+    const rect = compareBox.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const p = ((clientX - rect.left) / rect.width) * 100;
+    setComparePos(p);
+  }
+
+  compareBox.addEventListener('pointerdown', (e) => {
+    isDraggingCompare = true;
+    compareBox.classList.add('is-dragging');
+    compareBox.setPointerCapture(e.pointerId);
+    handleComparePointer(e.clientX);
   });
 
-  btnEngine?.addEventListener('click', (e) => {
+  compareBox.addEventListener('pointermove', (e) => {
+    if (isDraggingCompare) handleComparePointer(e.clientX);
+    if (loupeActive) updateLoupePosition(e.clientX, e.clientY);
+  });
+
+  compareBox.addEventListener('pointerup', () => {
+    isDraggingCompare = false;
+    compareBox.classList.remove('is-dragging');
+  });
+
+  compareBox.addEventListener('pointercancel', () => {
+    isDraggingCompare = false;
+    compareBox.classList.remove('is-dragging');
+  });
+
+  // Scroll Animation for Before & After Showcase
+  const demoSectionEl = document.getElementById('demo-showcase');
+  if (demoSectionEl && 'IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          demoSectionEl.classList.add('is-revealed');
+        }
+      });
+    }, { threshold: 0.15 });
+    observer.observe(demoSectionEl);
+  } else if (demoSectionEl) {
+    demoSectionEl.classList.add('is-revealed');
+  }
+
+  // Compare Modes (Slider | Side by side | Flip)
+  const btnModeSlider = document.getElementById('btn-mode-slider');
+  const btnModeSide = document.getElementById('btn-mode-side');
+  const btnModeFlip = document.getElementById('btn-mode-flip');
+
+  function setCompareMode(mode) {
+    compareMode = mode;
+    btnModeSlider.classList.toggle('active', mode === 'slider');
+    btnModeSide.classList.toggle('active', mode === 'side');
+    btnModeFlip.classList.toggle('active', mode === 'flip');
+
+    if (mode === 'slider') {
+      compareBox.classList.remove('hidden');
+      sideBySideBox.classList.add('hidden');
+      flipBox.classList.add('hidden');
+    } else if (mode === 'side') {
+      compareBox.classList.add('hidden');
+      sideBySideBox.classList.remove('hidden');
+      flipBox.classList.add('hidden');
+      syncSideBySide();
+    } else if (mode === 'flip') {
+      compareBox.classList.add('hidden');
+      sideBySideBox.classList.add('hidden');
+      flipBox.classList.remove('hidden');
+      syncFlipView(false);
+    }
+  }
+
+  btnModeSlider.addEventListener('click', () => setCompareMode('slider'));
+  btnModeSide.addEventListener('click', () => setCompareMode('side'));
+  btnModeFlip.addEventListener('click', () => setCompareMode('flip'));
+
+  function syncSideBySide() {
+    if (!canvasOrig || !canvasClean) return;
+    canvasSideOrig.width = canvasOrig.width;
+    canvasSideOrig.height = canvasOrig.height;
+    const ctx1 = canvasSideOrig.getContext('2d');
+    ctx1.clearRect(0, 0, canvasSideOrig.width, canvasSideOrig.height);
+    ctx1.drawImage(canvasOrig, 0, 0);
+
+    canvasSideClean.width = canvasClean.width;
+    canvasSideClean.height = canvasClean.height;
+    const ctx2 = canvasSideClean.getContext('2d');
+    ctx2.clearRect(0, 0, canvasSideClean.width, canvasSideClean.height);
+    ctx2.drawImage(canvasClean, 0, 0);
+  }
+
+  let flipIsClean = true;
+  function syncFlipView(isOriginal) {
+    if (!canvasOrig || !canvasClean) return;
+    canvasFlip.width = canvasClean.width;
+    canvasFlip.height = canvasClean.height;
+    const ctx = canvasFlip.getContext('2d');
+    ctx.clearRect(0, 0, canvasFlip.width, canvasFlip.height);
+    if (isOriginal) {
+      ctx.drawImage(canvasOrig, 0, 0);
+      flipBadge.textContent = 'Original';
+      flipBadge.className = 'chip neutral';
+    } else {
+      ctx.drawImage(canvasClean, 0, 0);
+      flipBadge.textContent = 'Cleaned';
+      flipBadge.className = 'chip ok';
+    }
+  }
+
+  flipBox.addEventListener('click', () => {
+    flipIsClean = !flipIsClean;
+    syncFlipView(!flipIsClean);
+  });
+
+  // Hold Original
+  const btnHoldOrig = document.getElementById('btn-hold-orig');
+  function startHoldOriginal() {
+    holdingOriginal = true;
+    btnHoldOrig.classList.add('btn-soft');
+    if (compareMode === 'slider') {
+      compareBox.style.setProperty('--pos', '100%');
+    } else if (compareMode === 'flip') {
+      syncFlipView(true);
+    }
+  }
+  function stopHoldOriginal() {
+    holdingOriginal = false;
+    btnHoldOrig.classList.remove('btn-soft');
+    if (compareMode === 'slider') {
+      compareBox.style.setProperty('--pos', comparePos + '%');
+    } else if (compareMode === 'flip') {
+      syncFlipView(!flipIsClean);
+    }
+  }
+
+  btnHoldOrig.addEventListener('mousedown', startHoldOriginal);
+  btnHoldOrig.addEventListener('mouseup', stopHoldOriginal);
+  btnHoldOrig.addEventListener('mouseleave', stopHoldOriginal);
+  btnHoldOrig.addEventListener('touchstart', startHoldOriginal, { passive: true });
+  btnHoldOrig.addEventListener('touchend', stopHoldOriginal);
+
+  // Loupe
+  const btnLoupe = document.getElementById('btn-loupe');
+  function toggleLoupe() {
+    loupeActive = !loupeActive;
+    btnLoupe.classList.toggle('btn-soft', loupeActive);
+    imageLoupe.classList.toggle('active', loupeActive);
+    if (loupeActive && currentCandidate) {
+      const rect = compareBox.getBoundingClientRect();
+      updateLoupePosition(rect.left + rect.width * 0.75, rect.top + rect.height * 0.75);
+    }
+  }
+  btnLoupe.addEventListener('click', toggleLoupe);
+
+  function updateLoupePosition(clientX, clientY) {
+    if (!loupeActive || !canvasClean) return;
+    const rect = compareBox.getBoundingClientRect();
+    const lx = clientX - rect.left;
+    const ly = clientY - rect.top;
+
+    imageLoupe.style.left = `${lx - 110}px`;
+    imageLoupe.style.top = `${ly - 110}px`;
+
+    const ctx = loupeCanvas.getContext('2d');
+    ctx.clearRect(0, 0, 220, 220);
+
+    const scaleX = canvasClean.width / rect.width;
+    const scaleY = canvasClean.height / rect.height;
+    const imgX = lx * scaleX;
+    const imgY = ly * scaleY;
+
+    const sw = 55;
+    const sh = 55;
+    const sx = Math.max(0, Math.min(canvasClean.width - sw, imgX - sw / 2));
+    const sy = Math.max(0, Math.min(canvasClean.height - sh, imgY - sh / 2));
+
+    ctx.drawImage(canvasClean, sx, sy, sw, sh, 0, 0, 220, 220);
+  }
+
+  // Image Unblending Pipeline
+  async function loadImageFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      showToast('Please select a valid image (PNG, JPG, WebP).', 'warn');
+      return;
+    }
+
+    await ensureEngines();
+    currentImageFile = file;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        canvasOrig.width = img.naturalWidth;
+        canvasOrig.height = img.naturalHeight;
+        const ctxOrig = canvasOrig.getContext('2d', { willReadFrequently: true });
+        ctxOrig.clearRect(0, 0, canvasOrig.width, canvasOrig.height);
+        ctxOrig.drawImage(img, 0, 0);
+
+        canvasClean.width = img.naturalWidth;
+        canvasClean.height = img.naturalHeight;
+
+        // Candidate Detection
+        const imgData = ctxOrig.getImageData(0, 0, canvasOrig.width, canvasOrig.height);
+        const bg = canvasOrig.width < 1000 ? watermarkEngine.bg48 : watermarkEngine.bg96;
+        const candidate = detectWatermarkCandidate(imgData, canvasOrig.width, canvasOrig.height, bg);
+        currentCandidate = candidate;
+
+        // Meta chips
+        lblMetaDims.textContent = `${img.naturalWidth} × ${img.naturalHeight}`;
+        lblMetaFormat.textContent = file.type.split('/')[1].toUpperCase();
+        lblMetaSize.textContent = `${(file.size / 1024).toFixed(0)} KB`;
+
+        // Confidence ring & title
+        const confidencePct = Math.round((candidate.score || 0.85) * 100);
+        updateConfidenceRing(confidencePct);
+
+        // Sliders
+        sliderImgGain.value = candidate.gain || 0.82;
+        lblImgGain.textContent = `${parseFloat(sliderImgGain.value).toFixed(2)}x`;
+        updateSliderFill(sliderImgGain);
+
+        sliderImgScale.value = candidate.sizeScale || 1.0;
+        lblImgScale.textContent = `${parseFloat(sliderImgScale.value).toFixed(2)}x`;
+        updateSliderFill(sliderImgScale);
+
+        lblImgX.textContent = '0';
+        lblImgY.textContent = '0';
+
+        // Apply clean
+        applyImageCleaning();
+
+        if (!imageSessionFiles.includes(file)) {
+          imageSessionFiles.push(file);
+          renderFilmstrip();
+        }
+        activeImageIndex = imageSessionFiles.indexOf(file);
+
+        setMode('image');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        setTimeout(() => {
+          const rect = compareBox.getBoundingClientRect();
+          const pX = candidate.offsetX ? (candidate.offsetX / img.naturalWidth) * rect.width : rect.width - 60;
+          const pY = candidate.offsetY ? (candidate.offsetY / img.naturalHeight) * rect.height : rect.height - 60;
+          triggerDissolve(particlesLayer, pX, pY);
+          triggerRevealSweep();
+        }, 150);
+
+        showToast('Image analyzed & cleaned with zero blur.', 'success');
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function applyImageCleaning() {
+    if (!watermarkEngine || !canvasOrig || !currentCandidate) return;
+
+    const ctxClean = canvasClean.getContext('2d', { willReadFrequently: true });
+    ctxClean.clearRect(0, 0, canvasClean.width, canvasClean.height);
+    ctxClean.drawImage(canvasOrig, 0, 0);
+
+    const imgData = ctxClean.getImageData(0, 0, canvasClean.width, canvasClean.height);
+    const base = getWatermarkInfo(canvasClean.width, canvasClean.height);
+    const bg = base.size <= 48 ? watermarkEngine.bg48 : watermarkEngine.bg96;
+
+    const gain = parseFloat(sliderImgGain.value);
+    const scale = parseFloat(sliderImgScale.value);
+    const offsetX = (currentCandidate.offsetX || 0) + parseInt(lblImgX.textContent, 10);
+    const offsetY = (currentCandidate.offsetY || 0) + parseInt(lblImgY.textContent, 10);
+
+    cleanFrame(bg, imgData, canvasClean.width, canvasClean.height, base, {
+      gain: gain,
+      sizeScale: scale,
+      offsetX: offsetX,
+      offsetY: offsetY
+    });
+
+    ctxClean.putImageData(imgData, 0, 0);
+
+    syncSideBySide();
+    if (compareMode === 'flip') syncFlipView(!flipIsClean);
+
+    btnImgUndo.removeAttribute('disabled');
+    btnImgReset.removeAttribute('disabled');
+  }
+
+  function updateSliderFill(slider) {
+    const min = parseFloat(slider.min);
+    const max = parseFloat(slider.max);
+    const val = parseFloat(slider.value);
+    const pct = ((val - min) / (max - min)) * 100;
+    slider.style.setProperty('--fill', pct + '%');
+  }
+
+  sliderImgGain.addEventListener('input', () => {
+    lblImgGain.textContent = `${parseFloat(sliderImgGain.value).toFixed(2)}x`;
+    updateSliderFill(sliderImgGain);
+    applyImageCleaning();
+  });
+
+  sliderImgScale.addEventListener('input', () => {
+    lblImgScale.textContent = `${parseFloat(sliderImgScale.value).toFixed(2)}x`;
+    updateSliderFill(sliderImgScale);
+    applyImageCleaning();
+  });
+
+  const stepperXDec = document.getElementById('stepper-x-dec');
+  const stepperXInc = document.getElementById('stepper-x-inc');
+  const stepperYDec = document.getElementById('stepper-y-dec');
+  const stepperYInc = document.getElementById('stepper-y-inc');
+
+  stepperXDec.addEventListener('click', () => {
+    lblImgX.textContent = parseInt(lblImgX.textContent, 10) - 1;
+    applyImageCleaning();
+  });
+  stepperXInc.addEventListener('click', () => {
+    lblImgX.textContent = parseInt(lblImgX.textContent, 10) + 1;
+    applyImageCleaning();
+  });
+  stepperYDec.addEventListener('click', () => {
+    lblImgY.textContent = parseInt(lblImgY.textContent, 10) - 1;
+    applyImageCleaning();
+  });
+  stepperYInc.addEventListener('click', () => {
+    lblImgY.textContent = parseInt(lblImgY.textContent, 10) + 1;
+    applyImageCleaning();
+  });
+
+  btnImgReset.addEventListener('click', () => {
+    if (!currentCandidate) return;
+    sliderImgGain.value = currentCandidate.gain || 0.82;
+    sliderImgScale.value = currentCandidate.sizeScale || 1.0;
+    lblImgX.textContent = '0';
+    lblImgY.textContent = '0';
+    lblImgGain.textContent = `${parseFloat(sliderImgGain.value).toFixed(2)}x`;
+    lblImgScale.textContent = `${parseFloat(sliderImgScale.value).toFixed(2)}x`;
+    updateSliderFill(sliderImgGain);
+    updateSliderFill(sliderImgScale);
+    applyImageCleaning();
+    showToast('Fine tuning reset to auto match.', 'info');
+  });
+
+  presetExpanderBtn.addEventListener('click', () => {
+    presetListBox.classList.toggle('hidden');
+    document.getElementById('preset-chevron').style.transform = presetListBox.classList.contains('hidden') ? 'none' : 'rotate(180deg)';
+  });
+
+  presetListBox.querySelectorAll('.preset-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      presetListBox.querySelectorAll('.preset-item').forEach((p) => p.classList.remove('selected'));
+      item.classList.add('selected');
+      const presetKey = item.dataset.preset;
+      lblCurrentPreset.textContent = item.querySelector('.preset-name').textContent;
+      presetListBox.classList.add('hidden');
+      document.getElementById('preset-chevron').style.transform = 'none';
+
+      if (currentCandidate) {
+        currentCandidate.presetKey = presetKey;
+        applyImageCleaning();
+        showToast(`Applied preset: ${item.querySelector('.preset-name').textContent}`, 'info');
+      }
+    });
+  });
+
+  toggleCornersRow.addEventListener('click', () => {
+    const isChecked = toggleCorners.getAttribute('aria-checked') === 'true';
+    toggleCorners.setAttribute('aria-checked', String(!isChecked));
+    appSettings.checkAllCorners = !isChecked;
+    if (canvasOrig && watermarkEngine) {
+      const ctx = canvasOrig.getContext('2d', { willReadFrequently: true });
+      const imgData = ctx.getImageData(0, 0, canvasOrig.width, canvasOrig.height);
+      const bg = canvasOrig.width < 1000 ? watermarkEngine.bg48 : watermarkEngine.bg96;
+      currentCandidate = detectWatermarkCandidate(imgData, canvasOrig.width, canvasOrig.height, bg);
+      applyImageCleaning();
+      showToast(appSettings.checkAllCorners ? 'Checked all corners for secondary marks.' : 'Checked default corner.', 'info');
+    }
+  });
+
+  function renderFilmstrip() {
+    filmstripList.innerHTML = '';
+    imageSessionFiles.forEach((f, idx) => {
+      const thumb = document.createElement('div');
+      thumb.className = `film-thumb ${idx === activeImageIndex ? 'active' : ''}`;
+      thumb.title = f.name;
+
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(f);
+      thumb.appendChild(img);
+
+      thumb.addEventListener('click', () => {
+        loadImageFile(f);
+      });
+      filmstripList.appendChild(thumb);
+    });
+  }
+
+  filmAddTile.addEventListener('click', () => imageInput.click());
+
+  btnImgDownload.addEventListener('click', () => {
+    if (!canvasClean) return;
+    if (typeof handleDownloadAd === 'function') handleDownloadAd();
+
+    const format = appSettings.outputFormat === 'webp' ? 'image/webp' : 'image/png';
+    const ext = appSettings.outputFormat === 'webp' ? '.webp' : '.png';
+    const baseName = currentImageFile ? currentImageFile.name.replace(/\.[^/.]+$/, '') : 'image';
+    const filename = `${baseName}${appSettings.suffix}${ext}`;
+
+    canvasClean.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      btnImgDownloadText.textContent = 'Saved';
+      btnImgDownload.style.background = 'var(--mint)';
+      setTimeout(() => {
+        btnImgDownloadText.textContent = 'Download PNG';
+        btnImgDownload.style.background = 'var(--violet)';
+      }, 2000);
+
+      showToast('Cleaned image saved to your device.', 'success');
+    }, format, 1.0);
+  });
+
+  btnImgCopy.addEventListener('click', async () => {
+    if (!canvasClean) return;
+    try {
+      canvasClean.toBlob(async (blob) => {
+        if (!blob) return;
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+        btnImgCopyText.textContent = 'Copied';
+        setTimeout(() => {
+          btnImgCopyText.textContent = 'Copy image';
+        }, 2000);
+        showToast('Image copied to clipboard.', 'success');
+      }, 'image/png');
+    } catch (err) {
+      console.error(err);
+      showToast('Clipboard copy not supported on this browser.', 'warn');
+    }
+  });
+
+  // Video Controller
+  async function loadVideoFile(file) {
+    if (!file || !file.type.startsWith('video/')) {
+      showToast('Please select a valid MP4 or WebM video.', 'warn');
+      return;
+    }
+
+    await ensureEngines();
+    currentVideoFile = file;
+    videoFilename.textContent = file.name;
+
+    if (!videoElement) {
+      videoElement = document.createElement('video');
+      videoElement.playsInline = true;
+      videoElement.muted = false;
+    }
+
+    const videoUrl = URL.createObjectURL(file);
+    videoElement.src = videoUrl;
+
+    videoElement.onloadedmetadata = () => {
+      videoDuration = videoElement.duration || 8;
+      lblVideoDims.textContent = `${videoElement.videoWidth} × ${videoElement.videoHeight}`;
+      lblVideoDur.textContent = formatTime(videoDuration);
+      lblVideoFps.textContent = '24 fps';
+
+      videoCanvasPreview.width = videoElement.videoWidth;
+      videoCanvasPreview.height = videoElement.videoHeight;
+
+      videoElement.currentTime = Math.min(1.0, videoDuration / 2);
+    };
+
+    videoElement.onseeked = () => {
+      const ctx = videoCanvasPreview.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(videoElement, 0, 0);
+
+      if (!videoCandidate) {
+        const imgData = ctx.getImageData(0, 0, videoCanvasPreview.width, videoCanvasPreview.height);
+        const bg = watermarkEngine.bg96;
+        videoCandidate = detectVideoWatermarkCandidate(imgData, videoCanvasPreview.width, videoCanvasPreview.height, bg);
+
+        vStep1.classList.add('done');
+        vStep1Desc.textContent = `High variance frame verified`;
+        vStep2.classList.add('done');
+        vStep2Desc.textContent = `${videoCandidate.name || 'Adaptive Inset'} locked`;
+        vStep3.classList.add('active');
+
+        generateVideoThumbnails();
+      }
+
+      cleanVideoPreviewFrame(ctx);
+
+      setMode('video');
+      showToast('Video clip loaded & watermark coordinates locked.', 'success');
+    };
+  }
+
+  function cleanVideoPreviewFrame(ctx) {
+    if (!videoCandidate || !videoEngine || !watermarkEngine) return;
+    const imgData = ctx.getImageData(0, 0, videoCanvasPreview.width, videoCanvasPreview.height);
+    const base = videoEngine.getVeoWatermark(videoCanvasPreview.width, videoCanvasPreview.height);
+    cleanFrame(watermarkEngine.bg96, imgData, videoCanvasPreview.width, videoCanvasPreview.height, base, {
+      gain: videoCandidate.gain || 0.6,
+      sizeScale: videoCandidate.sizeScale || 1.0,
+      offsetX: videoCandidate.offsetX || -24,
+      offsetY: videoCandidate.offsetY || -24,
+    });
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function formatTime(secs) {
+    const m = Math.floor(secs / 60);
+    const s = (secs % 60).toFixed(1);
+    return `${m < 10 ? '0' : ''}${m}:${parseFloat(s) < 10 ? '0' : ''}${s}`;
+  }
+
+  function generateVideoThumbnails() {
+    videoFrameStrip.innerHTML = '';
+    const numThumbs = 12;
+    const interval = videoDuration / numThumbs;
+
+    for (let i = 0; i < numThumbs; i++) {
+      const thumb = document.createElement('div');
+      thumb.className = 'film-thumb';
+      const c = document.createElement('canvas');
+      c.width = 56;
+      c.height = 56;
+      thumb.appendChild(c);
+
+      const targetTime = i * interval;
+      thumb.addEventListener('click', () => {
+        videoElement.currentTime = targetTime;
+      });
+      videoFrameStrip.appendChild(thumb);
+    }
+  }
+
+  btnVideoPlay.addEventListener('click', () => {
+    if (!videoElement) return;
+    if (videoPlaying) {
+      videoElement.pause();
+      videoPlaying = false;
+      playIcon.setAttribute('icon', 'ph:play-fill');
+    } else {
+      videoElement.play();
+      videoPlaying = true;
+      playIcon.setAttribute('icon', 'ph:pause-fill');
+      playVideoLoop();
+    }
+  });
+
+  function playVideoLoop() {
+    if (!videoPlaying || !videoElement) return;
+    const ctx = videoCanvasPreview.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(videoElement, 0, 0);
+    cleanVideoPreviewFrame(ctx);
+
+    const cur = videoElement.currentTime;
+    videoTimeReadout.textContent = `${formatTime(cur)} / ${formatTime(videoDuration)}`;
+    const pct = (cur / videoDuration) * 100;
+    videoTimelinePlayed.style.width = `${pct}%`;
+    videoTimelineThumb.style.left = `${pct}%`;
+
+    requestAnimationFrame(playVideoLoop);
+  }
+
+  btnFramePrev.addEventListener('click', () => {
+    if (videoElement) videoElement.currentTime = Math.max(0, videoElement.currentTime - 1 / 24);
+  });
+  btnFrameNext.addEventListener('click', () => {
+    if (videoElement) videoElement.currentTime = Math.min(videoDuration, videoElement.currentTime + 1 / 24);
+  });
+
+  btnSpeedToggle.addEventListener('click', () => {
+    if (videoSpeed === 1.0) videoSpeed = 2.0;
+    else if (videoSpeed === 2.0) videoSpeed = 0.5;
+    else videoSpeed = 1.0;
+    btnSpeedToggle.textContent = `${videoSpeed}x`;
+    if (videoElement) videoElement.playbackRate = videoSpeed;
+  });
+
+  videoTimeline.addEventListener('click', (e) => {
+    if (!videoElement || videoDuration <= 0) return;
+    const rect = videoTimeline.getBoundingClientRect();
+    const p = (e.clientX - rect.left) / rect.width;
+    videoElement.currentTime = p * videoDuration;
+  });
+
+  btnVideoClean.addEventListener('click', async () => {
+    if (!currentVideoFile || isCleaningVideo) return;
+    isCleaningVideo = true;
+
+    btnVideoClean.classList.add('hidden');
+    videoProcessingCard.classList.remove('hidden');
+    videoCompleteCard.classList.add('hidden');
+
+    try {
+      await ensureEngines();
+
+      const result = await videoEngine.process(currentVideoFile, {
+        gain: videoCandidate ? videoCandidate.gain : 0.6,
+        sizeScale: videoCandidate ? videoCandidate.sizeScale : 1.0,
+        offsetX: videoCandidate ? videoCandidate.offsetX : -24,
+        offsetY: videoCandidate ? videoCandidate.offsetY : -24,
+        onProgress: ({ progress }) => {
+          const pct = Math.round(progress * 100);
+          videoProcPct.textContent = `${pct}%`;
+          videoProcBar.style.width = `${pct}%`;
+          const etaSecs = Math.max(0, Math.round(((1 - progress) / (progress || 0.01)) * 10));
+          videoProcEta.textContent = `about ${etaSecs}s left`;
+          document.title = `(${pct}%) Unmark Video`;
+        }
+      });
+
+      lastCompletedVideoBlob = result.blob;
+      isCleaningVideo = false;
+      videoProcessingCard.classList.add('hidden');
+      videoCompleteCard.classList.remove('hidden');
+      videoOutputSize.textContent = `${(result.blob.size / (1024 * 1024)).toFixed(1)} MB MP4`;
+      document.title = 'Done. Unmark';
+      setTimeout(() => (document.title = 'Unmark — Lossless Watermark Removal'), 5000);
+
+      btnVideoDownload.onclick = () => {
+        if (typeof handleDownloadAd === 'function') handleDownloadAd();
+        const url = URL.createObjectURL(lastCompletedVideoBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = currentVideoFile.name.replace(/\.[^/.]+$/, '') + appSettings.suffix + '.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Cleaned video saved.', 'success');
+      };
+
+      showToast('Video watermark unblended successfully!', 'success');
+    } catch (err) {
+      console.error(err);
+      isCleaningVideo = false;
+      btnVideoClean.classList.remove('hidden');
+      videoProcessingCard.classList.add('hidden');
+      showToast('Error during video cleaning: ' + err.message, 'error');
+    }
+  });
+
+  btnVideoCancel.addEventListener('click', () => {
+    isCleaningVideo = false;
+    btnVideoClean.classList.remove('hidden');
+    videoProcessingCard.classList.add('hidden');
+    showToast('Video cleaning cancelled.', 'info');
+  });
+
+  // Batch Workspace
+  function addFilesToBatch(files) {
+    if (!files || files.length === 0) return;
+    let addedCount = 0;
+
+    Array.from(files).forEach((file) => {
+      const isImg = file.type.startsWith('image/');
+      const isVid = file.type.startsWith('video/') || file.name.endsWith('.mp4');
+
+      if (!isImg && !isVid) return;
+
+      const item = {
+        id: 'batch-' + Math.random().toString(36).substr(2, 9),
+        file: file,
+        type: isImg ? 'Image' : 'Video',
+        name: file.name,
+        size: (file.size / 1024).toFixed(0) + ' KB',
+        status: 'waiting',
+        progress: 0,
+        cleanedBlob: null,
+        origUrl: URL.createObjectURL(file)
+      };
+
+      batchQueue.push(item);
+      addedCount++;
+    });
+
+    if (addedCount > 0) {
+      updateBentoStats();
+      renderBatchRows();
+      setMode('batch');
+      showToast(`Added ${addedCount} files to batch queue.`, 'info');
+    }
+  }
+
+  function updateBentoStats() {
+    const total = batchQueue.length;
+    const cleaned = batchQueue.filter((i) => i.status === 'cleaned').length;
+    const look = batchQueue.filter((i) => i.status === 'look').length;
+    const waiting = batchQueue.filter((i) => i.status === 'waiting' || i.status === 'cleaning').length;
+
+    bentoTotal.textContent = total;
+    bentoCleaned.textContent = cleaned;
+    bentoLook.textContent = look;
+    bentoWaiting.textContent = waiting;
+
+    const overallPct = total > 0 ? (cleaned / total) * 100 : 0;
+    batchOverallBar.style.width = `${overallPct}%`;
+
+    batchZipBtn.disabled = cleaned === 0;
+  }
+
+  function renderBatchRows() {
+    batchQueueList.innerHTML = '';
+    batchQueue.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.setProperty('--n', index);
+      row.id = `row-${item.id}`;
+
+      const thumb = document.createElement('img');
+      thumb.className = 'thumb';
+      thumb.src = item.origUrl;
+      row.appendChild(thumb);
+
+      const name = document.createElement('span');
+      name.className = 'file-name';
+      name.textContent = item.name;
+      name.title = item.name;
+      row.appendChild(name);
+
+      const typeChip = document.createElement('span');
+      typeChip.className = 'chip neutral col-type';
+      typeChip.textContent = item.type;
+      row.appendChild(typeChip);
+
+      const sizeSpan = document.createElement('span');
+      sizeSpan.className = 'num col-size';
+      sizeSpan.style.color = 'var(--ink-3)';
+      sizeSpan.textContent = item.size;
+      row.appendChild(sizeSpan);
+
+      const statusChip = document.createElement('span');
+      statusChip.className = getStatusChipClass(item.status);
+      statusChip.innerHTML = getStatusChipHtml(item.status);
+      row.appendChild(statusChip);
+
+      const actBtn = document.createElement('button');
+      actBtn.className = 'btn btn-secondary btn-sm';
+      actBtn.textContent = item.status === 'cleaned' ? 'Review' : 'Remove';
+      actBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (item.status === 'cleaned') {
+          openBatchPreview(item);
+        } else {
+          removeBatchItem(item.id);
+        }
+      });
+      row.appendChild(actBtn);
+
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.setProperty('--p', item.progress);
+      row.appendChild(bar);
+
+      row.addEventListener('click', () => {
+        if (item.cleanedBlob) openBatchPreview(item);
+      });
+
+      batchQueueList.appendChild(row);
+    });
+  }
+
+  function getStatusChipClass(status) {
+    if (status === 'cleaned') return 'chip ok';
+    if (status === 'cleaning') return 'chip run';
+    if (status === 'look') return 'chip look';
+    if (status === 'failed') return 'chip bad';
+    return 'chip wait';
+  }
+
+  function getStatusChipHtml(status) {
+    if (status === 'cleaned') return '<iconify-icon icon="ph:check-bold" width="12"></iconify-icon>Cleaned';
+    if (status === 'cleaning') return '<iconify-icon icon="ph:sparkle-bold" width="12" class="spin"></iconify-icon>Cleaning';
+    if (status === 'look') return '<iconify-icon icon="ph:warning-circle-bold" width="12"></iconify-icon>Look again';
+    if (status === 'failed') return '<iconify-icon icon="ph:x-circle-bold" width="12"></iconify-icon>Failed';
+    return '<iconify-icon icon="ph:clock-bold" width="12"></iconify-icon>Waiting';
+  }
+
+  function removeBatchItem(id) {
+    const idx = batchQueue.findIndex((i) => i.id === id);
+    if (idx !== -1) {
+      batchQueue.splice(idx, 1);
+      updateBentoStats();
+      renderBatchRows();
+      if (batchQueue.length === 0) setMode('batch');
+    }
+  }
+
+  batchClearBtn.addEventListener('click', () => {
+    batchQueue = [];
+    updateBentoStats();
+    renderBatchRows();
+    setMode('batch');
+    showToast('Batch queue cleared.', 'info');
+  });
+
+  batchStartBtn.addEventListener('click', () => {
+    if (batchRunning) {
+      batchPaused = true;
+      batchRunning = false;
+      batchStartBtn.innerHTML = '<iconify-icon icon="ph:play-bold" width="16"></iconify-icon>Resume batch';
+      showToast('Batch processing paused.', 'info');
+      return;
+    }
+
+    batchRunning = true;
+    batchPaused = false;
+    batchStartBtn.innerHTML = '<iconify-icon icon="ph:pause-bold" width="16"></iconify-icon>Pause';
+    pumpBatchQueue();
+  });
+
+  async function pumpBatchQueue() {
+    if (!batchRunning || batchPaused) return;
+
+    while (batchActiveCount < appSettings.concurrency) {
+      const nextItem = batchQueue.find((i) => i.status === 'waiting');
+      if (!nextItem) break;
+      processBatchItem(nextItem);
+    }
+
+    const allDone = batchQueue.every((i) => i.status === 'cleaned' || i.status === 'look' || i.status === 'failed');
+    if (allDone && batchQueue.length > 0) {
+      batchRunning = false;
+      batchStartBtn.innerHTML = '<iconify-icon icon="ph:check-bold" width="16"></iconify-icon>All done';
+      showToast('All batch files finished processing!', 'success');
+    }
+  }
+
+  async function processBatchItem(item) {
+    batchActiveCount++;
+    item.status = 'cleaning';
+    updateBentoStats();
+    renderBatchRows();
+
+    try {
+      await ensureEngines();
+
+      if (item.type === 'Image') {
+        const img = new Image();
+        img.src = item.origUrl;
+        await img.decode();
+
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = img.naturalWidth;
+        offCanvas.height = img.naturalHeight;
+        const ctx = offCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+
+        const imgData = ctx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+        const bg = offCanvas.width < 1000 ? watermarkEngine.bg48 : watermarkEngine.bg96;
+        const cand = detectWatermarkCandidate(imgData, offCanvas.width, offCanvas.height, bg);
+
+        const base = getWatermarkInfo(offCanvas.width, offCanvas.height);
+        cleanFrame(bg, imgData, offCanvas.width, offCanvas.height, base, {
+          gain: cand.gain || 0.6,
+          sizeScale: cand.sizeScale || 1.0,
+          offsetX: cand.offsetX || 0,
+          offsetY: cand.offsetY || 0,
+        });
+
+        ctx.putImageData(imgData, 0, 0);
+
+        const format = appSettings.outputFormat === 'webp' ? 'image/webp' : 'image/png';
+        const blob = await new Promise((res) => offCanvas.toBlob(res, format, 1.0));
+
+        item.cleanedBlob = blob;
+        item.status = (cand.score || 0.8) >= 0.7 ? 'cleaned' : 'look';
+        item.progress = 1.0;
+      } else {
+        const res = await videoEngine.process(item.file, {
+          gain: 0.6,
+          sizeScale: 1.0,
+          offsetX: -24,
+          offsetY: -24,
+          onProgress: ({ progress }) => {
+            item.progress = progress;
+            const row = document.getElementById(`row-${item.id}`);
+            if (row) {
+              const bar = row.querySelector('.bar');
+              if (bar) bar.style.setProperty('--p', progress);
+            }
+          }
+        });
+
+        item.cleanedBlob = res.blob;
+        item.status = 'cleaned';
+        item.progress = 1.0;
+      }
+    } catch (err) {
+      console.error(err);
+      item.status = 'failed';
+    } finally {
+      batchActiveCount--;
+      updateBentoStats();
+      renderBatchRows();
+      pumpBatchQueue();
+    }
+  }
+
+  function openBatchPreview(item) {
+    if (!item.cleanedBlob) return;
+    modalFilename.textContent = item.name;
+    modalMeta.textContent = `${item.type} • ${item.size}`;
+
+    const cleanUrl = URL.createObjectURL(item.cleanedBlob);
+    modalBtnDownload.href = cleanUrl;
+    modalBtnDownload.download = item.name.replace(/\.[^/.]+$/, '') + appSettings.suffix + (item.type === 'Video' ? '.mp4' : '.png');
+
+    if (item.type === 'Image') {
+      modalImgPreview.classList.remove('hidden');
+      modalVidPreview.classList.add('hidden');
+      modalImgPreview.src = cleanUrl;
+
+      modalBtnClean.onclick = () => {
+        modalBtnClean.classList.add('active');
+        modalBtnOrig.classList.remove('active');
+        modalImgPreview.src = cleanUrl;
+      };
+      modalBtnOrig.onclick = () => {
+        modalBtnOrig.classList.add('active');
+        modalBtnClean.classList.remove('active');
+        modalImgPreview.src = item.origUrl;
+      };
+    } else {
+      modalImgPreview.classList.add('hidden');
+      modalVidPreview.classList.remove('hidden');
+      modalVidPreview.style.display = 'block';
+      modalVidPreview.src = cleanUrl;
+    }
+
+    modalBackdrop.classList.add('open');
+    batchPreviewModal.classList.add('open');
+  }
+
+  function closeBatchPreview() {
+    modalBackdrop.classList.remove('open');
+    batchPreviewModal.classList.remove('open');
+    if (modalVidPreview) modalVidPreview.pause();
+  }
+
+  modalBtnClose.addEventListener('click', closeBatchPreview);
+  modalBtnCloseFooter.addEventListener('click', closeBatchPreview);
+  modalBackdrop.addEventListener('click', closeBatchPreview);
+
+  batchZipBtn.addEventListener('click', async () => {
+    const cleanedItems = batchQueue.filter((i) => i.cleanedBlob);
+    if (cleanedItems.length === 0) return;
+
+    if (typeof handleExportAd === 'function') handleExportAd();
+
+    batchZipBtn.innerHTML = '<iconify-icon icon="ph:spinner-bold" width="16" class="spin"></iconify-icon>Packaging ZIP...';
+    batchZipBtn.disabled = true;
+
+    try {
+      const zip = new JSZip();
+      cleanedItems.forEach((item) => {
+        const ext = item.type === 'Video' ? '.mp4' : appSettings.outputFormat === 'webp' ? '.webp' : '.png';
+        const name = item.name.replace(/\.[^/.]+$/, '') + appSettings.suffix + ext;
+        zip.file(name, item.cleanedBlob);
+      });
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' }, (metadata) => {
+        batchZipBtn.textContent = `Packaging ${Math.round(metadata.percent)}%`;
+      });
+
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `unmarked_batch_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      batchZipBtn.innerHTML = '<iconify-icon icon="ph:check-bold" width="16"></iconify-icon>Saved ZIP';
+      setTimeout(() => {
+        batchZipBtn.innerHTML = '<iconify-icon icon="ph:archive-bold" width="16"></iconify-icon>Download all as ZIP';
+        batchZipBtn.disabled = false;
+      }, 2000);
+
+      showToast(`ZIP downloaded with ${cleanedItems.length} cleaned files!`, 'success');
+    } catch (err) {
+      console.error(err);
+      batchZipBtn.innerHTML = '<iconify-icon icon="ph:archive-bold" width="16"></iconify-icon>Download all as ZIP';
+      batchZipBtn.disabled = false;
+      showToast('Failed to create ZIP package: ' + err.message, 'error');
+    }
+  });
+
+  // Pickers & Drag Drop
+  dropzone.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    if (currentTab === 'image') imageInput.click();
+    else if (currentTab === 'video') videoInput.click();
+    else batchFileInput.click();
+  });
+
+  chooseImgBtn.addEventListener('click', () => imageInput.click());
+  chooseVideoBtn.addEventListener('click', () => videoInput.click());
+  batchAddMoreBtn.addEventListener('click', () => batchFileInput.click());
+  document.getElementById('batch-add-files').addEventListener('click', () => batchFileInput.click());
+  document.getElementById('batch-add-folder').addEventListener('click', () => batchFolderInput.click());
+  document.getElementById('batch-add-zip').addEventListener('click', () => batchZipInput.click());
+
+  imageInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) loadImageFile(e.target.files[0]);
+    imageInput.value = '';
+  });
+
+  videoInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) loadVideoFile(e.target.files[0]);
+    videoInput.value = '';
+  });
+
+  batchFileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) addFilesToBatch(e.target.files);
+    batchFileInput.value = '';
+  });
+
+  batchFolderInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) addFilesToBatch(e.target.files);
+    batchFolderInput.value = '';
+  });
+
+  batchZipInput.addEventListener('change', async (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const zipFile = e.target.files[0];
+      try {
+        const zip = await JSZip.loadAsync(zipFile);
+        const extractedFiles = [];
+        for (const [name, fileObj] of Object.entries(zip.files)) {
+          if (!fileObj.dir) {
+            const blob = await fileObj.async('blob');
+            const file = new File([blob], name, { type: blob.type || 'image/png' });
+            extractedFiles.push(file);
+          }
+        }
+        addFilesToBatch(extractedFiles);
+        showToast(`Extracted ${extractedFiles.length} files from ZIP.`, 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Could not read ZIP archive.', 'error');
+      }
+    }
+    batchZipInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    window.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      dropzone.setAttribute('data-drag', 'over');
+      if (dropTitle) dropTitle.textContent = 'Release to add';
+    });
+  });
+
+  ['dragleave', 'dragend'].forEach((eventName) => {
+    window.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      dropzone.removeAttribute('data-drag');
+      if (dropTitle) dropTitle.textContent = 'Drop an image, video or folder';
+    });
+  });
+
+  function showDropError() {
+    dropzone.classList.add('is-invalid');
+    if (dropTitle) dropTitle.textContent = 'That file type is not supported';
+    const hudDesc = dropzone.querySelector('.hud span:last-child');
+    if (hudDesc) hudDesc.textContent = 'Use PNG, JPG, WEBP, MP4 or ZIP';
+    setTimeout(() => {
+      dropzone.classList.remove('is-invalid');
+      if (dropTitle) dropTitle.textContent = 'Drop an image, video or folder';
+      if (hudDesc) hudDesc.textContent = 'Runs in this browser. Nothing is uploaded.';
+    }, 2400);
+  }
+
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.removeAttribute('data-drag');
+    if (dropTitle) dropTitle.textContent = 'Drop an image, video or folder';
+    if (!e.dataTransfer || !e.dataTransfer.files) return;
+    const files = e.dataTransfer.files;
+
+    if (files.length === 1) {
+      const file = files[0];
+      if (file.type.startsWith('image/')) {
+        setMode('image');
+        loadImageFile(file);
+      } else if (file.type.startsWith('video/') || file.name.endsWith('.mp4')) {
+        setMode('video');
+        loadVideoFile(file);
+      } else if (file.name.endsWith('.zip')) {
+        setMode('batch');
+        JSZip.loadAsync(file).then(async (zip) => {
+          const extracted = [];
+          for (const [n, f] of Object.entries(zip.files)) {
+            if (!f.dir) {
+              const b = await f.async('blob');
+              extracted.push(new File([b], n, { type: b.type || 'image/png' }));
+            }
+          }
+          addFilesToBatch(extracted);
+        }).catch((err) => {
+          console.error(err);
+          showDropError();
+        });
+      } else {
+        showDropError();
+      }
+    } else if (files.length > 1) {
+      setMode('batch');
+      addFilesToBatch(files);
+    }
+  });
+
+  window.addEventListener('paste', (e) => {
+    if (!e.clipboardData || !e.clipboardData.items) return;
+    for (const item of e.clipboardData.items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          setMode('image');
+          loadImageFile(file);
+          showToast('Image pasted from clipboard.', 'info');
+          break;
+        }
+      }
+    }
+  });
+
+  // Engine Popover & Settings
+  engineBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (popoverEngine) popoverEngine.classList.toggle('hidden');
+    enginePopover.classList.toggle('open');
   });
 
   document.addEventListener('click', (e) => {
-    if (popoverEngine && !popoverEngine.contains(e.target) && e.target !== btnEngine && !btnEngine?.contains(e.target)) {
-      popoverEngine.classList.add('hidden');
+    if (!enginePopover.contains(e.target) && e.target !== engineBtn) {
+      enginePopover.classList.remove('open');
     }
   });
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      closeSettings();
-      closeShortcuts();
-      if (popoverEngine) popoverEngine.classList.add('hidden');
-      const batchModal = document.getElementById('batch-preview-modal');
-      if (batchModal) batchModal.classList.add('hidden');
-    }
+  popCardBrowser.addEventListener('click', () => {
+    popCardBrowser.classList.add('selected');
+    popCardLocal.classList.remove('selected');
+    appSettings.engine = 'browser';
+    engineStatusText.textContent = 'In browser';
+    engineDot.className = 'dot';
+    enginePopover.classList.remove('open');
+    showToast('Engine switched to In-browser (100% private).', 'info');
   });
-}
 
-// ── Check Engine Health (Local FastAPI Ping) ──
-async function checkEngineHealth() {
-  const dot = document.getElementById('engine-ping-dot');
-  const statusTxt = document.getElementById('engine-ping-status');
-  const topbarTxt = document.getElementById('engine-status-text');
-  const inputUrl = document.getElementById('setting-engine-url');
-  const url = (inputUrl && inputUrl.value) ? inputUrl.value.trim() : 'http://127.0.0.1:8000';
+  popCardLocal.addEventListener('click', () => {
+    popCardLocal.classList.add('selected');
+    popCardBrowser.classList.remove('selected');
+    appSettings.engine = 'local';
+    engineStatusText.textContent = 'Local engine';
+    engineDot.className = 'dot local';
+    enginePopover.classList.remove('open');
+    showToast('Engine switched to Local engine.', 'info');
+  });
 
-  try {
-    const res = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(1500) });
-    if (res.ok) {
-      if (dot) dot.style.background = 'var(--success)';
-      if (statusTxt) statusTxt.textContent = 'Local FastAPI connected (port 8000)';
-      if (topbarTxt) topbarTxt.textContent = 'FastAPI + GPU';
-      return;
-    }
-  } catch (e) {
-    // Fallback to in-browser WebCodecs
-  }
-  if (dot) dot.style.background = 'var(--accent)';
-  if (statusTxt) statusTxt.textContent = 'In-browser WebCodecs (100% private, on-device)';
-  if (topbarTxt) topbarTxt.textContent = 'In browser';
-}
-
-// ── 3. Image Remover Controller ──
-function initImageRemover() {
-  const dropzone = document.getElementById('img-dropzone');
-  const fileInput = document.getElementById('img-input');
-  const stageLoaded = document.getElementById('img-stage-loaded');
-  const compareBox = document.getElementById('img-compare');
-  const mainCanvas = document.getElementById('img-main-canvas');
-  const origImg = document.getElementById('img-staging-preview');
-  const compareLine = document.getElementById('img-compare-line');
-  const layerOrig = document.getElementById('img-layer-orig');
-
-  const metaFilename = document.getElementById('img-staging-filename');
-  const metaDims = document.getElementById('img-staging-dims');
-  const selectedPresetName = document.getElementById('img-selected-preset-name');
-  const btnTogglePresets = document.getElementById('btn-toggle-presets');
-  const presetList = document.getElementById('img-preset-list');
-
-  const sliderGain = document.getElementById('slider-img-gain');
-  const sliderScale = document.getElementById('slider-img-scale');
-  const sliderOffsetX = document.getElementById('slider-img-offset-x');
-  const sliderOffsetY = document.getElementById('slider-img-offset-y');
-
-  const lblGain = document.getElementById('lbl-img-gain');
-  const lblScale = document.getElementById('lbl-img-scale');
-  const lblOffsetX = document.getElementById('lbl-img-offset-x');
-  const lblOffsetY = document.getElementById('lbl-img-offset-y');
-
-  const btnResetSliders = document.getElementById('btn-img-reset-sliders');
-  const btnExport = document.getElementById('btn-img-export');
-  const btnReplace = document.getElementById('btn-img-change-file-tuner');
-
-  const btnToggleSplit = document.getElementById('btn-toggle-split');
-  const btnHoldOrig = document.getElementById('btn-hold-orig');
-  const btnToggleLoupe = document.getElementById('btn-toggle-loupe');
-  const loupeEl = document.getElementById('img-loupe');
-  const loupeCanvas = document.getElementById('img-zoom-cleaned-canvas');
-  const btnFitScreen = document.getElementById('btn-fit-screen');
-
-  if (!dropzone || !fileInput) return;
-
-  let currentFile = null;
-  let currentPreviewFrame = null;
-  let currentBase = null;
-  let currentDetected = null;
-  let isProcessing = false;
-  let isSplitActive = true;
-  let isLoupeActive = false;
-  let splitPercent = 50;
-  let isDraggingSplit = false;
-
-  const currentSettings = { gain: 0.6, offsetX: -128, offsetY: -128, sizeScale: 1 };
-
-  function updateSliderLabels() {
-    if (lblGain) lblGain.textContent = `${currentSettings.gain.toFixed(2)}x`;
-    if (lblScale) lblScale.textContent = `${currentSettings.sizeScale.toFixed(2)}x`;
-    if (lblOffsetX) lblOffsetX.textContent = `${currentSettings.offsetX}px`;
-    if (lblOffsetY) lblOffsetY.textContent = `${currentSettings.offsetY}px`;
-  }
-
-  function setSplit(pct) {
-    splitPercent = Math.max(0, Math.min(100, pct));
-    if (compareBox) compareBox.dataset.split = splitPercent.toFixed(1);
-    if (compareLine) compareLine.style.left = `${splitPercent}%`;
-    if (layerOrig) {
-      if (!isSplitActive) {
-        layerOrig.style.clipPath = 'polygon(100% 0, 100% 0, 100% 100%, 100% 100%)';
+  btnTestEngine.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    localEnginePingStatus.textContent = 'Checking...';
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/v1/health');
+      if (res.ok) {
+        localEnginePingStatus.textContent = 'Connected';
+        localEnginePingStatus.className = 'chip ok';
       } else {
-        layerOrig.style.clipPath = `polygon(${splitPercent}% 0, 100% 0, 100% 100%, ${splitPercent}% 100%)`;
+        throw new Error();
       }
+    } catch {
+      localEnginePingStatus.textContent = 'Could not reach it';
+      localEnginePingStatus.className = 'chip bad';
     }
-  }
-
-  // Signature Reveal Animation: 420ms left-to-center sweep
-  function triggerRevealSweep() {
-    if (!compareBox) return;
-    compareBox.dataset.reveal = "play";
-    setSplit(0);
-    const start = performance.now();
-    const duration = 420;
-    function sweep(time) {
-      const elapsed = time - start;
-      const progress = Math.min(1, elapsed / duration);
-      // ease-reveal cubic-bezier(0.65, 0, 0.15, 1)
-      const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-      setSplit(ease * 50);
-      if (progress < 1) {
-        requestAnimationFrame(sweep);
-      } else {
-        setSplit(50);
-        compareBox.removeAttribute('data-reveal');
-      }
-    }
-    requestAnimationFrame(sweep);
-  }
-
-  // Compare Slider Drag Handling
-  function onPointerDown(e) {
-    if (e.target.closest('.stage-toolbar') || e.target.closest('.loupe')) return;
-    isDraggingSplit = true;
-    updateSplitFromPointer(e);
-    compareBox.setPointerCapture?.(e.pointerId);
-  }
-
-  function onPointerMove(e) {
-    if (isDraggingSplit) {
-      updateSplitFromPointer(e);
-    }
-    if (isLoupeActive) {
-      updateLoupePosition(e);
-    }
-  }
-
-  function onPointerUp(e) {
-    isDraggingSplit = false;
-    try { compareBox.releasePointerCapture?.(e.pointerId); } catch (err) {}
-  }
-
-  function updateSplitFromPointer(e) {
-    if (!compareBox) return;
-    const rect = compareBox.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const x = clientX - rect.left;
-    const pct = (x / rect.width) * 100;
-    setSplit(pct);
-  }
-
-  compareBox?.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
-
-  // Loupe Controller (4x magnification)
-  function updateLoupePosition(e) {
-    if (!loupeEl || !loupeCanvas || !mainCanvas || !compareBox) return;
-    const rect = compareBox.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-      loupeEl.classList.add('hidden');
-      return;
-    }
-    loupeEl.classList.remove('hidden');
-    loupeEl.style.left = `${x}px`;
-    loupeEl.style.top = `${y}px`;
-
-    // Map to canvas pixel coordinates
-    const scaleX = mainCanvas.width / rect.width;
-    const scaleY = mainCanvas.height / rect.height;
-    const cx = x * scaleX;
-    const cy = y * scaleY;
-
-    const zctx = loupeCanvas.getContext('2d');
-    zctx.imageSmoothingEnabled = false;
-    zctx.clearRect(0, 0, loupeCanvas.width, loupeCanvas.height);
-
-    const zoomFactor = 4;
-    const srcSize = 200 / zoomFactor; // 50px source box
-    zctx.drawImage(
-      mainCanvas,
-      cx - srcSize / 2, cy - srcSize / 2, srcSize, srcSize,
-      0, 0, loupeCanvas.width, loupeCanvas.height
-    );
-  }
-
-  btnToggleLoupe?.addEventListener('click', () => {
-    isLoupeActive = !isLoupeActive;
-    btnToggleLoupe.classList.toggle('active', isLoupeActive);
-    if (!isLoupeActive && loupeEl) loupeEl.classList.add('hidden');
   });
 
-  btnToggleSplit?.addEventListener('click', () => {
-    isSplitActive = !isSplitActive;
-    btnToggleSplit.classList.toggle('active', isSplitActive);
-    if (compareLine) compareLine.style.display = isSplitActive ? 'block' : 'none';
-    setSplit(splitPercent);
+  settingsBtn.addEventListener('click', () => {
+    settingsDrawer.classList.add('open');
+    settingsBackdrop.classList.add('open');
   });
 
-  // Hold original button / key
-  let previousSplit = 50;
-  function startHoldOriginal() {
-    previousSplit = splitPercent;
-    setSplit(100);
-    if (layerOrig) layerOrig.style.clipPath = 'polygon(0 0, 100% 0, 100% 100%, 0 100%)';
-  }
-  function stopHoldOriginal() {
-    setSplit(previousSplit);
+  function closeSettingsDrawer() {
+    settingsDrawer.classList.remove('open');
+    settingsBackdrop.classList.remove('open');
   }
 
-  btnHoldOrig?.addEventListener('mousedown', startHoldOriginal);
-  btnHoldOrig?.addEventListener('mouseup', stopHoldOriginal);
-  btnHoldOrig?.addEventListener('mouseleave', stopHoldOriginal);
-  btnHoldOrig?.addEventListener('touchstart', (e) => { e.preventDefault(); startHoldOriginal(); });
-  btnHoldOrig?.addEventListener('touchend', (e) => { e.preventDefault(); stopHoldOriginal(); });
+  btnCloseSettings.addEventListener('click', closeSettingsDrawer);
+  settingsBackdrop.addEventListener('click', closeSettingsDrawer);
 
+  settingImgFormat.addEventListener('change', (e) => {
+    appSettings.outputFormat = e.target.value;
+    btnImgDownloadText.textContent = `Download ${e.target.value.toUpperCase()}`;
+  });
+
+  settingSuffix.addEventListener('input', (e) => {
+    appSettings.suffix = e.target.value;
+  });
+
+  concurrencyDec.addEventListener('click', () => {
+    appSettings.concurrency = Math.max(1, appSettings.concurrency - 1);
+    concurrencyVal.textContent = appSettings.concurrency;
+  });
+
+  concurrencyInc.addEventListener('click', () => {
+    appSettings.concurrency = Math.min(4, appSettings.concurrency + 1);
+    concurrencyVal.textContent = appSettings.concurrency;
+  });
+
+  btnResetSettings.addEventListener('click', () => {
+    appSettings = {
+      outputFormat: 'png',
+      suffix: '_cleaned',
+      concurrency: 2,
+      checkAllCorners: false,
+      engine: 'browser'
+    };
+    settingImgFormat.value = 'png';
+    settingSuffix.value = '_cleaned';
+    concurrencyVal.textContent = '2';
+    btnImgDownloadText.textContent = 'Download PNG';
+    showToast('Settings reset to defaults.', 'info');
+  });
+
+  // Shortcuts
   window.addEventListener('keydown', (e) => {
-    if (currentTab === 'image' && e.key === '\\' && !e.repeat) {
+    if (e.target.matches('input, select, textarea')) return;
+
+    if (e.key === '1') setMode('image');
+    else if (e.key === '2') setMode('video');
+    else if (e.key === '3') setMode('batch');
+    else if (e.key === 'o' || e.key === 'O') {
+      if (currentTab === 'image') imageInput.click();
+      else if (currentTab === 'video') videoInput.click();
+      else batchFileInput.click();
+    } else if (e.key === 'c' || e.key === 'C') {
+      if (currentTab === 'image') {
+        const next = compareMode === 'slider' ? 'side' : compareMode === 'side' ? 'flip' : 'slider';
+        setCompareMode(next);
+      }
+    } else if (e.key === 'z' || e.key === 'Z') {
+      if (currentTab === 'image') toggleLoupe();
+    } else if (e.key === '\\') {
       startHoldOriginal();
+    } else if (e.key === 'r' || e.key === 'R') {
+      if (currentTab === 'image' && currentCandidate) {
+        const rect = compareBox.getBoundingClientRect();
+        triggerDissolve(particlesLayer, rect.width / 2, rect.height / 2);
+        triggerRevealSweep();
+      }
+    } else if (e.code === 'Space') {
+      if (currentTab === 'video') {
+        e.preventDefault();
+        btnVideoPlay.click();
+      }
+    } else if (e.key === ',') {
+      if (currentTab === 'video') btnFramePrev.click();
+      else settingsBtn.click();
+    } else if (e.key === '.') {
+      if (currentTab === 'video') btnFrameNext.click();
+    } else if (e.key === 'Escape') {
+      closeSettingsDrawer();
+      closeBatchPreview();
+      enginePopover.classList.remove('open');
     }
   });
+
   window.addEventListener('keyup', (e) => {
-    if (currentTab === 'image' && e.key === '\\') {
+    if (e.key === '\\') {
       stopHoldOriginal();
     }
   });
 
-  btnFitScreen?.addEventListener('click', () => {
-    setSplit(50);
-  });
+  // Nav shadow on scroll
+  window.addEventListener('scroll', () => {
+    const nav = document.querySelector('.nav');
+    if (nav) {
+      if (window.scrollY > 8) nav.classList.add('scrolled');
+      else nav.classList.remove('scrolled');
+    }
+  }, { passive: true });
 
-  // Presets Accordion
-  btnTogglePresets?.addEventListener('click', () => {
-    if (presetList) presetList.classList.toggle('hidden');
-  });
+  // Proof Band Interactive Compare Slider
+  const proofCompare = document.getElementById('proof-compare');
+  const proofMarker = document.getElementById('proof-ruler-marker');
+  if (proofCompare) {
+    let isDraggingProof = false;
 
-  presetList?.querySelectorAll('.preset-item').forEach(item => {
-    item.addEventListener('click', () => {
-      presetList.querySelectorAll('.preset-item').forEach(p => p.classList.remove('active'));
-      item.classList.add('active');
-      const presetKey = item.dataset.preset;
-      const w = currentPreviewFrame ? currentPreviewFrame.width : 1536;
-      const h = currentPreviewFrame ? currentPreviewFrame.height : 1536;
-      const p = getAdaptiveImagePreset(presetKey, w, h);
-      Object.assign(currentSettings, p);
+    function setProofPos(pct) {
+      const clamped = Math.min(98, Math.max(2, pct));
+      proofCompare.style.setProperty('--pos', clamped + '%');
+      proofCompare.setAttribute('aria-valuenow', Math.round(clamped));
+      proofCompare.setAttribute('aria-valuetext', Math.round(clamped) + ' percent original');
+      if (proofMarker) proofMarker.style.left = clamped + '%';
+    }
 
-      if (sliderOffsetX) sliderOffsetX.value = currentSettings.offsetX;
-      if (sliderOffsetY) sliderOffsetY.value = currentSettings.offsetY;
-      if (sliderGain) sliderGain.value = currentSettings.gain;
-      if (sliderScale) sliderScale.value = currentSettings.sizeScale;
+    function handleProofPointer(clientX) {
+      const rect = proofCompare.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const p = ((clientX - rect.left) / rect.width) * 100;
+      setProofPos(p);
+    }
 
-      if (selectedPresetName) selectedPresetName.textContent = item.querySelector('.preset-title')?.textContent || presetKey;
-      presetList.classList.add('hidden');
-      updateSliderLabels();
-      renderTuner();
+    proofCompare.addEventListener('pointerdown', (e) => {
+      isDraggingProof = true;
+      proofCompare.classList.add('is-dragging');
+      proofCompare.setPointerCapture(e.pointerId);
+      handleProofPointer(e.clientX);
     });
-  });
 
-  function bindSlider(element, prop, isFloat = false) {
-    if (!element) return;
-    element.addEventListener('input', (e) => {
-      currentSettings[prop] = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
-      updateSliderLabels();
-      renderTuner();
+    proofCompare.addEventListener('pointermove', (e) => {
+      if (isDraggingProof) handleProofPointer(e.clientX);
     });
-  }
 
-  bindSlider(sliderGain, 'gain', true);
-  bindSlider(sliderScale, 'sizeScale', true);
-  bindSlider(sliderOffsetX, 'offsetX', false);
-  bindSlider(sliderOffsetY, 'offsetY', false);
+    proofCompare.addEventListener('pointerup', () => {
+      isDraggingProof = false;
+      proofCompare.classList.remove('is-dragging');
+    });
 
-  btnResetSliders?.addEventListener('click', () => {
-    applyAutoSettings();
-    showToast('Sliders reset to auto-detected watermark parameters');
-  });
+    proofCompare.addEventListener('pointercancel', () => {
+      isDraggingProof = false;
+      proofCompare.classList.remove('is-dragging');
+    });
 
-  function applyAutoSettings() {
-    const w = currentPreviewFrame ? currentPreviewFrame.width : 1536;
-    const h = currentPreviewFrame ? currentPreviewFrame.height : 1536;
-
-    let p;
-    if (currentDetected) {
-      p = {
-        gain: currentDetected.gain,
-        offsetX: currentDetected.offsetX,
-        offsetY: currentDetected.offsetY,
-        sizeScale: currentDetected.sizeScale
-      };
-      if (selectedPresetName) {
-        selectedPresetName.textContent = `${currentDetected.name} (${Math.round(currentDetected.score * 100)}% match)`;
+    proofCompare.addEventListener('keydown', (e) => {
+      const current = parseFloat(proofCompare.style.getPropertyValue('--pos')) || 62;
+      const step = e.shiftKey ? 10 : 1;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setProofPos(current - step);
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setProofPos(current + step);
       }
-    } else {
-      p = getAdaptiveImagePreset('new', w, h);
-      if (selectedPresetName) selectedPresetName.textContent = 'Gemini Adaptive Inset';
-    }
-    Object.assign(currentSettings, p);
-
-    if (sliderOffsetX) {
-      sliderOffsetX.min = -Math.round(w * 0.45);
-      sliderOffsetX.max = Math.round(w * 0.2);
-      sliderOffsetX.value = currentSettings.offsetX;
-    }
-    if (sliderOffsetY) {
-      sliderOffsetY.min = -Math.round(h * 0.45);
-      sliderOffsetY.max = Math.round(h * 0.2);
-      sliderOffsetY.value = currentSettings.offsetY;
-    }
-    if (sliderGain) sliderGain.value = currentSettings.gain;
-    if (sliderScale) sliderScale.value = currentSettings.sizeScale;
-
-    updateSliderLabels();
-    renderTuner();
-  }
-
-  function renderTuner() {
-    if (!currentPreviewFrame || !mainCanvas || !watermarkEngine) return;
-    const { width, height, imageData } = currentPreviewFrame;
-
-    mainCanvas.width = width;
-    mainCanvas.height = height;
-
-    const copy = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
-    const activeBg = (Math.min(width, height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-    cleanFrame(activeBg, copy, width, height, currentBase, currentSettings);
-
-    const ctx = mainCanvas.getContext('2d');
-    ctx.putImageData(copy, 0, 0);
-  }
-
-  async function grabImageFrame(file) {
-    if (typeof createImageBitmap === 'function') {
-      try {
-        const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-        const width = bmp.width;
-        const height = bmp.height;
-        const c = document.createElement('canvas');
-        c.width = width;
-        c.height = height;
-        const cx = c.getContext('2d', { willReadFrequently: true });
-        cx.drawImage(bmp, 0, 0, width, height);
-        const imageData = cx.getImageData(0, 0, width, height);
-        bmp.close();
-        return { width, height, imageData };
-      } catch (e) {}
-    }
-
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const w = img.naturalWidth || img.width;
-        const h = img.naturalHeight || img.height;
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        const cx = c.getContext('2d', { willReadFrequently: true });
-        cx.drawImage(img, 0, 0, w, h);
-        const imageData = cx.getImageData(0, 0, w, h);
-        URL.revokeObjectURL(url);
-        resolve({ width: w, height: h, imageData });
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('Could not read image file.'));
-      };
-      img.src = url;
     });
-  }
 
-  async function handleImageFile(file) {
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select a valid image file (PNG, JPG, WebP)', 'danger');
-      return;
-    }
-    currentFile = file;
-
-    try {
-      if (!watermarkEngine) {
-        watermarkEngine = await WatermarkEngine.create();
-      }
-
-      currentPreviewFrame = await grabImageFrame(file);
-
-      // Metadata
-      if (metaFilename) metaFilename.textContent = file.name;
-      if (metaDims) metaDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
-      if (origImg) origImg.src = URL.createObjectURL(file);
-
-      // Auto detect
-      currentBase = watermarkEngine.getWatermarkInfo(currentPreviewFrame.width, currentPreviewFrame.height);
-      const activeBg = (Math.min(currentPreviewFrame.width, currentPreviewFrame.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-      currentDetected = detectWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, activeBg);
-
-      // Hide dropzone, show loaded stage
-      dropzone.classList.add('hidden');
-      stageLoaded.classList.remove('hidden');
-
-      applyAutoSettings();
-      triggerRevealSweep();
-      showToast(`Watermark detected: ${currentDetected.name}`, 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Error loading image: ' + (err.message || err), 'danger');
+    // Reveal animation when entering viewport: settle 100% -> 62% over 700ms once
+    if ('IntersectionObserver' in window) {
+      let hasAnimated = false;
+      const proofObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && !hasAnimated) {
+            hasAnimated = true;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+              setProofPos(62);
+            } else {
+              setProofPos(100);
+              const startTime = performance.now();
+              const duration = 700;
+              function animateSettle(time) {
+                const elapsed = time - startTime;
+                const t = Math.min(1, elapsed / duration);
+                const ease = 1 - Math.pow(1 - t, 3);
+                const val = 100 - (100 - 62) * ease;
+                setProofPos(val);
+                if (t < 1) requestAnimationFrame(animateSettle);
+              }
+              requestAnimationFrame(animateSettle);
+            }
+            proofObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
+      proofObserver.observe(proofCompare);
     }
   }
 
-  dropzone.onclick = () => fileInput.click();
-  dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); };
-  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
-  dropzone.ondrop = (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (e.dataTransfer.files.length) handleImageFile(e.dataTransfer.files[0]);
-  };
-  fileInput.onchange = (e) => {
-    if (e.target.files.length) handleImageFile(e.target.files[0]);
-    fileInput.value = '';
-  };
-
-  btnReplace?.addEventListener('click', () => fileInput.click());
-
-  // Export / Download Cleaned Image
-  btnExport?.addEventListener('click', async () => {
-    if (!currentFile || !currentPreviewFrame || !mainCanvas) return;
-    try {
-      handleExportAd();
-      loadMonetagPopunder();
-
-      const blob = await new Promise(r => mainCanvas.toBlob(r, 'image/png'));
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `unmark_${currentFile.name.replace(/\.[^/.]+$/, '')}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      showToast('Cleaned image downloaded successfully!', 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Error exporting image: ' + err.message, 'danger');
-    }
-  });
-}
-
-// ── 4. Video Remover Controller ──
-function initVideoRemover() {
-  const dropzone = document.getElementById('video-dropzone');
-  const fileInput = document.getElementById('video-input');
-  const stageLoaded = document.getElementById('video-stage-loaded');
-  const mainCanvas = document.getElementById('video-main-canvas');
-  const videoSrc = document.getElementById('video-src-element');
-  const statusOverlay = document.getElementById('video-status');
-  const progressBar = document.getElementById('video-progress-bar');
-  const progressText = document.getElementById('video-progress-text');
-
-  const metaFilename = document.getElementById('video-staging-filename');
-  const metaDims = document.getElementById('video-staging-dims');
-
-  const step1Desc = document.getElementById('video-step-1-desc');
-  const step2Desc = document.getElementById('video-step-2-desc');
-  const step3Desc = document.getElementById('video-step-3-desc');
-
-  const sliderGain = document.getElementById('slider-video-gain');
-  const sliderScale = document.getElementById('slider-video-scale');
-  const sliderOffsetX = document.getElementById('slider-video-offset-x');
-  const sliderOffsetY = document.getElementById('slider-video-offset-y');
-
-  const lblGain = document.getElementById('lbl-video-gain');
-  const lblScale = document.getElementById('lbl-video-scale');
-  const lblOffsetX = document.getElementById('lbl-video-offset-x');
-  const lblOffsetY = document.getElementById('lbl-video-offset-y');
-
-  const btnResetSliders = document.getElementById('btn-video-reset-sliders');
-  const btnExport = document.getElementById('btn-video-export');
-  const btnReplace = document.getElementById('btn-video-change-file-tuner');
-
-  const btnPlay = document.getElementById('btn-video-play');
-  const iconPlay = document.getElementById('icon-video-play');
-  const btnStepBack = document.getElementById('btn-video-step-back');
-  const btnStepForward = document.getElementById('btn-video-step-forward');
-  const timeReadout = document.getElementById('lbl-video-time');
-  const timelineTrack = document.getElementById('video-timeline-track');
-  const timelinePlayed = document.getElementById('video-timeline-played');
-  const timelineThumb = document.getElementById('video-timeline-thumb');
-  const thumbStrip = document.getElementById('video-thumbnail-strip');
-
-  if (!dropzone || !fileInput) return;
-
-  let currentFile = null;
-  let currentPreviewFrame = null;
-  let currentBase = null;
-  let currentDetected = null;
-  let isPlaying = false;
-  let animFrameId = null;
-
-  const currentSettings = { gain: 0.6, offsetX: -24, offsetY: -24, sizeScale: 1 };
-
-  function updateSliderLabels() {
-    if (lblGain) lblGain.textContent = `${currentSettings.gain.toFixed(2)}x`;
-    if (lblScale) lblScale.textContent = `${currentSettings.sizeScale.toFixed(2)}x`;
-    if (lblOffsetX) lblOffsetX.textContent = `${currentSettings.offsetX}px`;
-    if (lblOffsetY) lblOffsetY.textContent = `${currentSettings.offsetY}px`;
-  }
-
-  function bindSlider(element, prop, isFloat = false) {
-    if (!element) return;
-    element.addEventListener('input', (e) => {
-      currentSettings[prop] = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
-      updateSliderLabels();
-      renderFrame();
-    });
-  }
-
-  bindSlider(sliderGain, 'gain', true);
-  bindSlider(sliderScale, 'sizeScale', true);
-  bindSlider(sliderOffsetX, 'offsetX', false);
-  bindSlider(sliderOffsetY, 'offsetY', false);
-
-  btnResetSliders?.addEventListener('click', () => {
-    applyAutoSettings();
-    showToast('Video watermark parameters reset');
-  });
-
-  function applyAutoSettings() {
-    const w = currentPreviewFrame ? currentPreviewFrame.width : 1280;
-    const h = currentPreviewFrame ? currentPreviewFrame.height : 720;
-
-    let p;
-    if (currentDetected) {
-      p = {
-        gain: currentDetected.gain,
-        offsetX: currentDetected.offsetX,
-        offsetY: currentDetected.offsetY,
-        sizeScale: currentDetected.sizeScale
-      };
-      if (step2Desc) step2Desc.textContent = `${currentDetected.name} (${Math.round(currentDetected.score * 100)}%)`;
-    } else {
-      p = getAdaptiveVideoPreset('veo', w, h);
-      if (step2Desc) step2Desc.textContent = 'Veo Video Inset';
-    }
-    Object.assign(currentSettings, p);
-
-    if (sliderOffsetX) {
-      sliderOffsetX.min = -Math.round(w * 0.45);
-      sliderOffsetX.max = Math.round(w * 0.2);
-      sliderOffsetX.value = currentSettings.offsetX;
-    }
-    if (sliderOffsetY) {
-      sliderOffsetY.min = -Math.round(h * 0.45);
-      sliderOffsetY.max = Math.round(h * 0.2);
-      sliderOffsetY.value = currentSettings.offsetY;
-    }
-    if (sliderGain) sliderGain.value = currentSettings.gain;
-    if (sliderScale) sliderScale.value = currentSettings.sizeScale;
-
-    updateSliderLabels();
-    renderFrame();
-  }
-
-  function renderFrame() {
-    if (!videoSrc || !mainCanvas || !videoEngine) return;
-    if (videoSrc.videoWidth === 0) return;
-
-    const w = videoSrc.videoWidth;
-    const h = videoSrc.videoHeight;
-    mainCanvas.width = w;
-    mainCanvas.height = h;
-
-    const ctx = mainCanvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(videoSrc, 0, 0, w, h);
-
-    const imgData = ctx.getImageData(0, 0, w, h);
-    cleanFrame(videoEngine.sparkleImage, imgData, w, h, currentBase, currentSettings);
-    ctx.putImageData(imgData, 0, 0);
-
-    updateTimeReadout();
-  }
-
-  function formatTime(sec) {
-    if (isNaN(sec)) return '00:00.00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    const ms = Math.floor((sec % 1) * 100);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
-  }
-
-  function updateTimeReadout() {
-    if (!videoSrc) return;
-    const cur = videoSrc.currentTime || 0;
-    const dur = videoSrc.duration || 0;
-    if (timeReadout) timeReadout.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
-    const pct = dur > 0 ? (cur / dur) * 100 : 0;
-    if (timelinePlayed) timelinePlayed.style.width = `${pct}%`;
-    if (timelineThumb) timelineThumb.style.left = `${pct}%`;
-  }
-
-  function togglePlay() {
-    if (!videoSrc) return;
-    if (videoSrc.paused || videoSrc.ended) {
-      videoSrc.play();
-      isPlaying = true;
-      if (iconPlay) iconPlay.setAttribute('icon', 'ph:pause-fill');
-      loopPlayback();
-    } else {
-      videoSrc.pause();
-      isPlaying = false;
-      if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
-      if (animFrameId) cancelAnimationFrame(animFrameId);
-    }
-  }
-
-  function loopPlayback() {
-    if (!isPlaying) return;
-    renderFrame();
-    animFrameId = requestAnimationFrame(loopPlayback);
-  }
-
-  btnPlay?.addEventListener('click', togglePlay);
-
-  btnStepBack?.addEventListener('click', () => {
-    if (!videoSrc) return;
-    videoSrc.pause();
-    isPlaying = false;
-    if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
-    videoSrc.currentTime = Math.max(0, videoSrc.currentTime - 1 / 30);
-    renderFrame();
-  });
-
-  btnStepForward?.addEventListener('click', () => {
-    if (!videoSrc) return;
-    videoSrc.pause();
-    isPlaying = false;
-    if (iconPlay) iconPlay.setAttribute('icon', 'ph:play-fill');
-    videoSrc.currentTime = Math.min(videoSrc.duration, videoSrc.currentTime + 1 / 30);
-    renderFrame();
-  });
-
-  timelineTrack?.addEventListener('click', (e) => {
-    if (!videoSrc || !videoSrc.duration) return;
-    const rect = timelineTrack.getBoundingClientRect();
-    const pos = (e.clientX - rect.left) / rect.width;
-    videoSrc.currentTime = pos * videoSrc.duration;
-    renderFrame();
-  });
-
-  // Extract 12 thumbnails along video timeline
-  async function generateThumbnailStrip(file, duration) {
-    if (!thumbStrip) return;
-    thumbStrip.innerHTML = '';
-    const numThumbs = 12;
-    const interval = duration / numThumbs;
-
-    const v = document.createElement('video');
-    v.muted = true;
-    v.src = URL.createObjectURL(file);
-    await new Promise(r => { v.onloadedmetadata = r; });
-
-    for (let i = 0; i < numThumbs; i++) {
-      const t = i * interval + interval / 2;
-      v.currentTime = t;
-      await new Promise(r => { v.onseeked = r; });
-
-      const c = document.createElement('canvas');
-      c.width = 64;
-      c.height = 36;
-      c.getContext('2d').drawImage(v, 0, 0, 64, 36);
-
-      const div = document.createElement('div');
-      div.className = 'thumbnail-frame';
-      div.title = `Seek to ${formatTime(t)}`;
-      div.appendChild(c);
-
-      div.onclick = () => {
-        videoSrc.currentTime = t;
-        renderFrame();
-      };
-      thumbStrip.appendChild(div);
-    }
-    URL.revokeObjectURL(v.src);
-  }
-
-  async function handleVideoFile(file) {
-    if (!file.type.startsWith('video/')) {
-      showToast('Please select a valid video file (MP4, WebM, MOV)', 'danger');
-      return;
-    }
-    currentFile = file;
-
-    try {
-      if (!videoEngine) {
-        videoEngine = await VideoWatermarkEngine.create();
-      }
-
-      currentPreviewFrame = await grabPreviewFrame(file);
-
-      if (metaFilename) metaFilename.textContent = file.name;
-      if (metaDims) metaDims.textContent = `${currentPreviewFrame.width} × ${currentPreviewFrame.height} px`;
-      if (step1Desc) step1Desc.textContent = `High-variance locked (${currentPreviewFrame.width}x${currentPreviewFrame.height})`;
-
-      currentBase = videoEngine.getVeoWatermark(currentPreviewFrame.width, currentPreviewFrame.height);
-      currentDetected = detectVideoWatermarkCandidate(currentPreviewFrame.imageData, currentPreviewFrame.width, currentPreviewFrame.height, videoEngine.sparkleImage);
-
-      dropzone.classList.add('hidden');
-      stageLoaded.classList.remove('hidden');
-
-      videoSrc.src = URL.createObjectURL(file);
-      await new Promise(r => { videoSrc.onloadedmetadata = r; });
-
-      applyAutoSettings();
-      generateThumbnailStrip(file, videoSrc.duration);
-      showToast('Video analyzed! Watermark locked on high-contrast frame.', 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Error loading video: ' + (err.message || err), 'danger');
-    }
-  }
-
-  dropzone.onclick = () => fileInput.click();
-  dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); };
-  dropzone.ondragleave = () => dropzone.classList.remove('drag-over');
-  dropzone.ondrop = (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (e.dataTransfer.files.length) handleVideoFile(e.dataTransfer.files[0]);
-  };
-  fileInput.onchange = (e) => {
-    if (e.target.files.length) handleVideoFile(e.target.files[0]);
-    fileInput.value = '';
-  };
-
-  btnReplace?.addEventListener('click', () => fileInput.click());
-
-  // Process Full Video
-  btnExport?.addEventListener('click', async () => {
-    if (!currentFile || !videoEngine) return;
-    try {
-      handleExportAd();
-      loadMonetagPopunder();
-
-      if (videoSrc) videoSrc.pause();
-      isPlaying = false;
-
-      statusOverlay.classList.remove('hidden');
-      if (progressBar) progressBar.style.width = '0%';
-      if (progressText) progressText.textContent = '0%';
-
-      const res = await videoEngine.process(currentFile, {
-        ...currentSettings,
-        onProgress: ({ progress }) => {
-          const pct = Math.round(progress * 100);
-          if (progressBar) progressBar.style.width = `${pct}%`;
-          if (progressText) progressText.textContent = `Encoding ${pct}%`;
-        }
-      });
-
-      statusOverlay.classList.add('hidden');
-
-      const a = document.createElement('a');
-      a.href = res.url;
-      a.download = `unmark_${currentFile.name.replace(/\.[^/.]+$/, '')}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      showToast('Video watermark removed! Clean MP4 downloaded.', 'success');
-    } catch (err) {
-      console.error(err);
-      statusOverlay.classList.add('hidden');
-      showToast('Video processing failed: ' + (err.message || err), 'danger');
-    }
-  });
-}
-
-// ── 5. Batch Remover Controller ──
-function initBatch() {
-  const dropzone = document.getElementById('batch-dropzone');
-  const folderInput = document.getElementById('batch-folder-input');
-  const fileInput = document.getElementById('batch-file-input');
-  const btnSelectFolder = document.getElementById('btn-select-batch-folder');
-  const btnSelectZip = document.getElementById('btn-select-batch-zip');
-
-  const statusCard = document.getElementById('batch-status-card');
-  const summaryTotal = document.getElementById('batch-summary-total');
-  const statCompleted = document.getElementById('batch-stat-completed');
-  const statProcessing = document.getElementById('batch-stat-processing');
-  const statFailed = document.getElementById('batch-stat-failed');
-  const progressBar = document.getElementById('batch-progress-bar');
-  const filesList = document.getElementById('batch-files-list');
-  const btnBatchDownload = document.getElementById('btn-batch-download');
-  const btnCleanAnother = document.getElementById('btn-batch-clean-another');
-
-  const previewModal = document.getElementById('batch-preview-modal');
-  const modalFilename = document.getElementById('modal-filename');
-  const modalImg = document.getElementById('modal-img-preview');
-  const modalVid = document.getElementById('modal-vid-preview');
-  const btnModalClean = document.getElementById('btn-modal-show-clean');
-  const btnModalOrig = document.getElementById('btn-modal-show-orig');
-  const btnModalClose = document.getElementById('btn-modal-close');
-  const btnModalCloseFooter = document.getElementById('btn-modal-close-footer');
-  const btnModalDownload = document.getElementById('btn-modal-download');
-
-  let activeModalItem = null;
-  let batchPreset = 'auto';
-
-  document.querySelectorAll('[data-batch-preset]').forEach(btn => {
+  // Modes Spec Sheet Open Buttons
+  document.querySelectorAll('.spec-open-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-batch-preset]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      batchPreset = btn.getAttribute('data-batch-preset') || 'auto';
+      const targetMode = btn.dataset.modeTarget;
+      if (targetMode) {
+        setMode(targetMode);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        const dropEl = document.getElementById('dropzone');
+        if (dropEl) dropEl.focus();
+      }
     });
   });
 
-  btnSelectFolder?.addEventListener('click', (e) => { e.stopPropagation(); folderInput?.click(); });
-  btnSelectZip?.addEventListener('click', (e) => { e.stopPropagation(); fileInput?.click(); });
-
-  folderInput?.addEventListener('change', (e) => {
-    if (e.target.files.length) startBatchProcess(Array.from(e.target.files));
-    folderInput.value = '';
-  });
-  fileInput?.addEventListener('change', (e) => {
-    if (e.target.files.length) startBatchProcess(Array.from(e.target.files));
-    fileInput.value = '';
-  });
-
-  dropzone?.addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    folderInput?.click();
-  });
-  dropzone?.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
-  dropzone?.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (e.dataTransfer.files.length) startBatchProcess(Array.from(e.dataTransfer.files));
-  });
-
-  btnCleanAnother?.addEventListener('click', () => {
-    statusCard?.classList.add('hidden');
-    dropzone?.classList.remove('hidden');
-    if (filesList) filesList.innerHTML = '';
-  });
-
-  function closeModal() {
-    if (previewModal) previewModal.classList.add('hidden');
-    if (modalVid) { modalVid.pause(); modalVid.src = ''; }
-    activeModalItem = null;
-  }
-  btnModalClose?.addEventListener('click', closeModal);
-  btnModalCloseFooter?.addEventListener('click', closeModal);
-
-  btnModalClean?.addEventListener('click', () => {
-    btnModalClean.classList.add('active');
-    btnModalOrig.classList.remove('active');
-    if (activeModalItem) {
-      if (activeModalItem.isVideo) {
-        modalVid.src = activeModalItem.cleanUrl;
-      } else {
-        modalImg.src = activeModalItem.cleanUrl;
+  // Footer Navigation Mode Jumps
+  document.querySelectorAll('[data-mode-jump]').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const mode = link.dataset.modeJump;
+      if (mode) {
+        setMode(mode);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        const dropEl = document.getElementById('dropzone');
+        if (dropEl) dropEl.focus();
       }
-    }
-  });
-
-  btnModalOrig?.addEventListener('click', () => {
-    btnModalOrig.classList.add('active');
-    btnModalClean.classList.remove('active');
-    if (activeModalItem) {
-      if (activeModalItem.isVideo) {
-        modalVid.src = activeModalItem.origUrl;
-      } else {
-        modalImg.src = activeModalItem.origUrl;
-      }
-    }
-  });
-
-  async function startBatchProcess(files) {
-    if (!files || files.length === 0) return;
-
-    dropzone?.classList.add('hidden');
-    statusCard?.classList.remove('hidden');
-    if (filesList) filesList.innerHTML = '';
-
-    const isSingleZip = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
-    let fileQueue = files;
-
-    if (isSingleZip && window.JSZip) {
-      try {
-        const zipData = await JSZip.loadAsync(files[0]);
-        const entries = Object.keys(zipData.files);
-        const extracted = [];
-        for (const [path, entry] of Object.entries(zipData.files)) {
-          if (entry.dir) continue;
-          if (/\.(png|jpe?g|webp|mp4|webm|mov)$/i.test(path)) {
-            const blob = await entry.async('blob');
-            const fname = path.split('/').pop();
-            const f = new File([blob], fname, { type: blob.type });
-            Object.defineProperty(f, 'webkitRelativePath', { value: path });
-            extracted.push(f);
-          }
-        }
-        if (extracted.length > 0) fileQueue = extracted;
-      } catch (err) {
-        console.warn('Zip inspect error, processing direct:', err);
-      }
-    }
-
-    const total = fileQueue.length;
-    if (summaryTotal) summaryTotal.textContent = `${total} files`;
-    let completed = 0;
-    let failed = 0;
-
-    const zip = new JSZip();
-
-    if (!watermarkEngine) watermarkEngine = await WatermarkEngine.create();
-    if (!videoEngine) videoEngine = await VideoWatermarkEngine.create();
-
-    // Create table rows
-    const rowMap = new Map();
-    fileQueue.forEach((f, idx) => {
-      const tr = document.createElement('tr');
-      const isVid = /\.(mp4|mov|webm)$/i.test(f.name);
-      tr.innerHTML = `
-        <td><canvas width="48" height="48" style="border-radius: var(--r-xs); background: var(--bg-3); width: 48px; height: 48px; object-fit: cover;"></canvas></td>
-        <td style="font-weight: 500; color: var(--text-1); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${f.name}</td>
-        <td><span class="queue-type">${isVid ? 'VIDEO' : 'IMAGE'}</span></td>
-        <td class="num text-xs text-3">${(f.size / 1024 / 1024).toFixed(2)} MB</td>
-        <td><span class="chip chip-neutral" id="status-chip-${idx}">Waiting</span></td>
-        <td><button type="button" class="btn btn-ghost btn-sm hidden" id="btn-prev-${idx}">Preview</button></td>
-      `;
-      filesList.appendChild(tr);
-      rowMap.set(idx, { tr, file: f, isVid });
     });
+  });
 
-    // Process sequentially
-    for (let i = 0; i < total; i++) {
-      const { tr, file, isVid } = rowMap.get(i);
-      const chip = tr.querySelector(`#status-chip-${i}`);
-      const btnPrev = tr.querySelector(`#btn-prev-${i}`);
-      const thumbCanvas = tr.querySelector('canvas');
-
-      chip.className = 'chip chip-warning';
-      chip.textContent = 'Processing...';
-      if (statProcessing) statProcessing.textContent = `${total - i} pending`;
-
-      try {
-        let cleanBlob = null;
-        let origUrl = URL.createObjectURL(file);
-        let cleanUrl = null;
-
-        if (isVid) {
-          // Exact same Video Watermark Engine!
-          const res = await videoEngine.process(file, {
-            preset: batchPreset,
-            gain: 0.6,
-            offsetX: -24,
-            offsetY: -24,
-            sizeScale: 1
-          });
-          cleanBlob = res.blob;
-          cleanUrl = res.url;
-        } else {
-          // Exact same Image Watermark Engine!
-          const bmp = await createImageBitmap(file);
-          const c = document.createElement('canvas');
-          c.width = bmp.width;
-          c.height = bmp.height;
-          const cx = c.getContext('2d', { willReadFrequently: true });
-          cx.drawImage(bmp, 0, 0);
-          const imgData = cx.getImageData(0, 0, bmp.width, bmp.height);
-          bmp.close();
-
-          const activeBg = (Math.min(c.width, c.height) < 1000) ? watermarkEngine.bg48 : watermarkEngine.bg96;
-          const detected = detectWatermarkCandidate(imgData, c.width, c.height, activeBg);
-          const base = watermarkEngine.getWatermarkInfo(c.width, c.height);
-
-          cleanFrame(activeBg, imgData, c.width, c.height, base, {
-            gain: detected.gain,
-            offsetX: detected.offsetX,
-            offsetY: detected.offsetY,
-            sizeScale: detected.sizeScale
-          });
-
-          cx.putImageData(imgData, 0, 0);
-          cleanBlob = await new Promise(r => c.toBlob(r, 'image/png'));
-          cleanUrl = URL.createObjectURL(cleanBlob);
-
-          // Draw thumbnail
-          thumbCanvas.getContext('2d').drawImage(c, 0, 0, 48, 48);
-        }
-
-        const outPath = file.webkitRelativePath || file.name;
-        zip.file(outPath, cleanBlob);
-
-        chip.className = 'chip chip-success';
-        chip.textContent = 'Cleaned';
-        completed++;
-        if (statCompleted) statCompleted.textContent = `${completed} cleaned`;
-
-        btnPrev.classList.remove('hidden');
-        btnPrev.onclick = () => {
-          activeModalItem = { name: file.name, origUrl, cleanUrl, isVideo: isVid };
-          if (modalFilename) modalFilename.textContent = file.name;
-          if (isVid) {
-            modalImg.classList.add('hidden');
-            modalVid.classList.remove('hidden');
-            modalVid.src = cleanUrl;
-          } else {
-            modalVid.classList.add('hidden');
-            modalImg.classList.remove('hidden');
-            modalImg.src = cleanUrl;
-          }
-          if (btnModalDownload) {
-            btnModalDownload.href = cleanUrl;
-            btnModalDownload.download = `unmark_${file.name}`;
-          }
-          previewModal?.classList.remove('hidden');
-        };
-
-      } catch (err) {
-        console.error(err);
-        chip.className = 'chip chip-danger';
-        chip.textContent = 'Failed';
-        failed++;
-        if (statFailed) statFailed.textContent = `${failed} failed`;
-      }
-
-      const pct = Math.round(((i + 1) / total) * 100);
-      if (progressBar) progressBar.style.width = `${pct}%`;
-    }
-
-    if (statProcessing) statProcessing.textContent = '0 pending';
-
-    // Generate ZIP
-    try {
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      const zipUrl = URL.createObjectURL(zipBlob);
-      if (btnBatchDownload) {
-        btnBatchDownload.href = zipUrl;
-        btnBatchDownload.download = 'unmark_batch_cleaned.zip';
-        btnBatchDownload.classList.remove('hidden');
-      }
-      showToast(`Batch completed: ${completed} files cleaned successfully!`, 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Error generating ZIP: ' + err.message, 'danger');
-    }
-  }
-}
-
-// ── 6. Global Keyboard Shortcuts ──
-function initShortcuts() {
-  window.addEventListener('keydown', (e) => {
-    // Avoid triggering when focused in an input
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-
-    if (e.key === '1') {
-      e.preventDefault();
-      window.switchTab?.('image', true);
-    } else if (e.key === '2') {
-      e.preventDefault();
-      window.switchTab?.('video', true);
-    } else if (e.key === '3') {
-      e.preventDefault();
-      window.switchTab?.('batch', true);
-    } else if (e.key === 'o' || e.key === 'O') {
-      e.preventDefault();
-      if (currentTab === 'image') document.getElementById('img-input')?.click();
-      else if (currentTab === 'video') document.getElementById('video-input')?.click();
-      else if (currentTab === 'batch') document.getElementById('batch-folder-input')?.click();
-    } else if (e.key === ' ') {
-      if (currentTab === 'video') {
-        e.preventDefault();
-        document.getElementById('btn-video-play')?.click();
-      }
-    } else if (e.key === ',') {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        document.getElementById('btn-open-settings')?.click();
-      } else if (currentTab === 'video') {
-        e.preventDefault();
-        document.getElementById('btn-video-step-back')?.click();
-      }
-    } else if (e.key === '.') {
-      if (currentTab === 'video') {
-        e.preventDefault();
-        document.getElementById('btn-video-step-forward')?.click();
-      }
-    } else if (e.key === 'z' || e.key === 'Z') {
-      if (currentTab === 'image') {
-        e.preventDefault();
-        document.getElementById('btn-toggle-loupe')?.click();
-      }
-    } else if (e.key === 'c' || e.key === 'C') {
-      if (currentTab === 'image') {
-        e.preventDefault();
-        document.getElementById('btn-toggle-split')?.click();
-      }
-    } else if (e.key === 'r' || e.key === 'R') {
-      if (currentTab === 'image') {
-        e.preventDefault();
-        document.getElementById('btn-img-reset-sliders')?.click();
-      } else if (currentTab === 'video') {
-        e.preventDefault();
-        document.getElementById('btn-video-reset-sliders')?.click();
-      }
-    } else if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-      e.preventDefault();
-      if (currentTab === 'image') document.getElementById('btn-img-export')?.click();
-      else if (currentTab === 'video') document.getElementById('btn-video-export')?.click();
-      else if (currentTab === 'batch') document.getElementById('btn-batch-download')?.click();
-    } else if (e.key === '?') {
-      e.preventDefault();
-      document.getElementById('btn-open-shortcuts')?.click();
+  // Whole Window Drag Overlay
+  let windowDragCounter = 0;
+  window.addEventListener('dragenter', (e) => {
+    if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+      windowDragCounter++;
+      document.body.classList.add('window-drag-over');
     }
   });
-}
+  window.addEventListener('dragleave', () => {
+    windowDragCounter--;
+    if (windowDragCounter <= 0) {
+      windowDragCounter = 0;
+      document.body.classList.remove('window-drag-over');
+    }
+  });
+  window.addEventListener('drop', () => {
+    windowDragCounter = 0;
+    document.body.classList.remove('window-drag-over');
+  });
+
+  // Default Init
+  setMode('image');
+  ensureEngines().catch(console.error);
+})();

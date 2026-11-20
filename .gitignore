@@ -21,3 +21,11 @@ cleaned_*.png
 recheck_*.png
 tests/fixtures/cleaned_*.png
 tests/fixtures/test_*.png
+tests/*.png
+current_landing_*.png
+diagrams.html
+workspace_elements.html
+v3_light_spec.md
+v3_spec.md
+*Gemini_Generated_Image*
+assets/vendor/
